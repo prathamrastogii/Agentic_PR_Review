@@ -7,8 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from backend.agent.baseline import review_pr_baseline
-from backend.github.client import GitHubClient, parse_pr_url
+from backend.services.review_service import run_review
 
 
 async def main() -> None:
@@ -16,19 +15,8 @@ async def main() -> None:
         print("Usage: python scripts/baseline_review.py <pr_url>")
         sys.exit(1)
 
-    pr_url = sys.argv[1]
-    parsed = parse_pr_url(pr_url)
-    client = GitHubClient()
-
-    try:
-        metadata = await client.get_pr_metadata(
-            parsed.owner, parsed.repo, parsed.pr_number
-        )
-        files = await client.get_pr_files(parsed.owner, parsed.repo, parsed.pr_number)
-        verdict = await review_pr_baseline(metadata, files)
-        print(json.dumps(verdict.model_dump(), indent=2))
-    finally:
-        await client.close()
+    verdict = await run_review(sys.argv[1], mode="baseline")
+    print(json.dumps(verdict.model_dump(), indent=2))
 
 
 if __name__ == "__main__":
