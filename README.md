@@ -35,14 +35,3 @@ Health check: `curl http://localhost:8000/health`
 | `GITHUB_TOKEN` | Optional | PAT for private PRs and higher GitHub rate limits |
 | `MAX_INVESTIGATIONS` | Optional | Agent tool-call budget (default: 5) |
 | `GROQ_MODEL` | Optional | Groq model id (default: `llama-3.3-70b-versatile`) |
-
-## Project phases
-
-1. **Phase 0** — Scaffold + health endpoint
-2. **Phase 1** — GitHub client (PR metadata, diffs, file fetch)
-3. **Phase 2** — Single-shot baseline reviewer + structured output
-4. **Phase 3** — LangGraph agent loop (plan → investigate → re-plan)
-5. **Phase 4** — FastAPI review endpoint
-6. **Phase 5** — Minimal frontend
-7. **Phase 6** — Render deployment
-8. **Phase 7** — Validation (agent vs baseline)
