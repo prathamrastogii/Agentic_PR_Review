@@ -52,15 +52,17 @@ and lowered confidence."""
 
 CHALLENGE_PROMPT = """Before that verdict is accepted, verify it.
 
-You claimed high confidence without reading a single file outside the diff. Check yourself:
-- Which functions, classes, constants, and types does this diff call, import, override, or depend on?
-- For each one, is its definition actually visible in the diff you were shown?
-- Could a caller elsewhere in the repository break because of this change?
+This pull request changes multiple files. You have not read any file outside the diff yet.
 
-If every dependency really is visible in the diff, keep your VERDICT with high confidence.
-Otherwise choose one: INVESTIGATE the single file whose contents would most change your
-review, or keep the VERDICT with confidence lowered to "medium" and state in the summary what
-you could not verify."""
+List every function, class, constant, and type the diff depends on. For each one, is its
+full definition visible in the diff hunks you were shown — not just its name or a call site?
+
+If ANY dependency is not fully defined in the diff, you MUST choose INVESTIGATE for the one
+file that would most change your review. Do not return a VERDICT yet.
+
+You may only keep a VERDICT if this PR changes exactly one file and every symbol it uses is
+defined inside that file's diff hunks. Otherwise INVESTIGATE or lower confidence to medium
+and explain what you could not verify."""
 
 BUDGET_EXHAUSTED_PROMPT = """Your investigation budget is exhausted. You cannot fetch more files.
 Produce your best-effort review based on all context available so far.

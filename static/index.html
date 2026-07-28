@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PR review agent</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="title-bar">
+        <button type="button" class="title-bar__brand" id="home-link" aria-label="PR review agent home">
+          <svg class="site-icon" width="22" height="22" viewBox="0 0 28 28" aria-hidden="true">
+            <rect x="4" y="3" width="16" height="20" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
+            <path d="M9 9h8M9 13h8M9 17h5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <circle cx="20" cy="20" r="5.5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+            <path d="M23.5 23.5L26 26" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+          <span class="site-title">PR review agent</span>
+        </button>
+        <span id="title-bar-hint" class="title-bar__hint">Choose how to run reviews</span>
+      </header>
+
+      <!-- Phase 1: Welcome -->
+      <section id="view-welcome" class="view view--welcome" data-view="welcome">
+        <div class="welcome">
+          <div class="welcome__intro">
+            <h2 class="welcome__headline">Review pull requests with context</h2>
+            <p class="welcome__tagline">
+              Paste a GitHub PR URL and get a structured review — summary, investigation trail, and flagged issues.
+            </p>
+          </div>
+
+          <div class="choice-cards">
+            <button type="button" class="choice-card choice-card--success" id="choose-free-tier">
+              <span class="choice-card__icon" aria-hidden="true">
+                <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+                  <circle cx="14" cy="14" r="10" stroke="currentColor" stroke-width="1.5"/>
+                  <path d="M9 14l3.5 3.5L19 10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </span>
+              <span class="choice-card__badge badge badge--success">Ready to go</span>
+              <span class="choice-card__title">Use free tier</span>
+              <span class="choice-card__desc">Groq-hosted Llama 3.3 70B, no setup needed</span>
+            </button>
+
+            <button type="button" class="choice-card choice-card--neutral" id="choose-own-llm">
+              <span class="choice-card__icon" aria-hidden="true">
+                <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+                  <rect x="6" y="4" width="16" height="20" rx="2" stroke="currentColor" stroke-width="1.5"/>
+                  <path d="M10 10h8M10 14h5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                  <circle cx="19" cy="19" r="4" stroke="currentColor" stroke-width="1.5"/>
+                </svg>
+              </span>
+              <span class="choice-card__title">Use your own LLM</span>
+              <span class="choice-card__desc">Bring your own API key and model</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Phase 2: Own-LLM config -->
+      <section id="view-config" class="view view--config" data-view="config" hidden>
+        <div class="config-screen">
+          <div class="config-screen__header">
+            <a href="#" class="text-link" id="config-back">← Back</a>
+            <h2 class="config-screen__title">Configure your LLM</h2>
+            <p class="config-screen__subtitle">
+              Connect a provider you control. Keys stay in this session only — nothing is saved to the server.
+            </p>
+          </div>
+
+          <form id="config-form" class="config-form card">
+            <label class="field-label" for="config-provider">Provider</label>
+            <select id="config-provider" class="text-input" required>
+              <option value="">Select a provider…</option>
+              <option value="openai" data-default-model="gpt-4o">OpenAI</option>
+              <option value="anthropic" data-default-model="claude-sonnet-4-20250514">Anthropic</option>
+              <option value="groq" data-default-model="llama-3.3-70b-versatile">Groq</option>
+              <option value="google" data-default-model="gemini-2.0-flash">Google Gemini</option>
+              <option value="custom" data-default-model="">Custom endpoint</option>
+            </select>
+
+            <label class="field-label" for="config-model">Model</label>
+            <input
+              id="config-model"
+              type="text"
+              class="text-input"
+              placeholder="e.g. gpt-4o"
+              required
+              autocomplete="off"
+            />
+
+            <label class="field-label" for="config-api-key">API key</label>
+            <input
+              id="config-api-key"
+              type="password"
+              class="text-input"
+              placeholder="sk-…"
+              required
+              autocomplete="off"
+            />
+
+            <div id="base-url-field" class="base-url-field" hidden>
+              <label class="field-label" for="config-base-url">Base URL override</label>
+              <input
+                id="config-base-url"
+                type="url"
+                class="text-input"
+                placeholder="https://your-host/v1"
+                autocomplete="off"
+              />
+              <p class="field-hint">For self-hosted or OpenAI-compatible endpoints.</p>
+            </div>
+
+            <div class="config-actions">
+              <button type="button" class="secondary-button" id="test-connection-btn">Test connection</button>
+              <div id="connection-result" class="connection-result" hidden role="status" aria-live="polite"></div>
+            </div>
+
+            <button type="submit" class="primary-button" id="config-continue" disabled>
+              Continue to review
+            </button>
+          </form>
+        </div>
+      </section>
+
+      <!-- Phase 3: Review dashboard -->
+      <section id="view-dashboard" class="view view--dashboard" data-view="dashboard" hidden>
+        <div class="workspace">
+          <aside class="sidebar" aria-labelledby="form-heading">
+            <div class="llm-indicator" id="llm-indicator">
+              <span class="llm-indicator__dot" id="llm-indicator-dot" aria-hidden="true"></span>
+              <span class="llm-indicator__text" id="llm-indicator-text"></span>
+              <button type="button" class="text-link text-link--inline" id="change-llm-path">Change</button>
+            </div>
+
+            <h2 id="form-heading" class="panel-label">Review controls</h2>
+
+            <form id="review-form" class="review-form">
+              <label class="field-label" for="pr-url">Pull request URL</label>
+              <input
+                id="pr-url"
+                name="pr_url"
+                type="url"
+                class="text-input"
+                placeholder="https://github.com/owner/repo/pull/123"
+                required
+                autocomplete="off"
+              />
+
+              <fieldset class="mode-fieldset">
+                <legend class="field-label">Review mode</legend>
+                <div class="mode-options">
+                  <label class="mode-option">
+                    <input type="radio" name="mode" value="agent" checked />
+                    <span class="mode-label">Agent</span>
+                    <span class="mode-hint">Fetches files beyond the diff</span>
+                  </label>
+                  <label class="mode-option">
+                    <input type="radio" name="mode" value="baseline" />
+                    <span class="mode-label">Baseline</span>
+                    <span class="mode-hint">Single pass on the diff only</span>
+                  </label>
+                </div>
+              </fieldset>
+
+              <button type="submit" class="primary-button" id="submit-btn">Run review</button>
+              <p class="cold-start-note">
+                First request after idle can take 30–90 seconds while the agent fetches the PR and runs investigations.
+              </p>
+            </form>
+          </aside>
+
+          <main class="workspace-main">
+            <div id="workspace-empty" class="workspace-empty">
+              <div class="workspace-empty__inner">
+                <p class="workspace-empty__title">No review yet</p>
+                <p class="workspace-empty__text">
+                  Paste a GitHub pull request URL in the sidebar and run a review.
+                  Results will appear here — summary, investigation trail, and issues side by side.
+                </p>
+              </div>
+            </div>
+
+            <div id="status" class="status" role="status" aria-live="polite" hidden></div>
+
+            <section id="results" class="results" hidden>
+              <div id="partial-banner" class="banner banner-warning" hidden>
+                Investigation budget was exhausted before the agent finished. Treat this review as partial.
+              </div>
+
+              <article class="card summary-card">
+                <div class="summary-header">
+                  <h2 class="section-title">Summary</h2>
+                  <span id="confidence-badge" class="verdict-badge"></span>
+                </div>
+                <p id="summary-text" class="summary-text"></p>
+                <p id="mode-note" class="meta-line"></p>
+              </article>
+
+              <div class="results-columns">
+                <section class="card trail-card" aria-labelledby="trail-heading">
+                  <h2 id="trail-heading" class="section-title">Investigation trail</h2>
+                  <p id="trail-intro" class="section-intro">
+                    Files opened beyond the diff — proof the agent looked before judging.
+                  </p>
+                  <ol id="trail-list" class="trail-list"></ol>
+                  <p id="trail-empty" class="empty-state" hidden></p>
+                </section>
+
+                <section class="card issues-card" aria-labelledby="issues-heading">
+                  <h2 id="issues-heading" class="section-title">Issues</h2>
+                  <div id="issues-list" class="issues-list"></div>
+                  <p id="issues-empty" class="empty-state" hidden>No issues flagged in this review.</p>
+                </section>
+              </div>
+            </section>
+          </main>
+        </div>
+      </section>
+    </div>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

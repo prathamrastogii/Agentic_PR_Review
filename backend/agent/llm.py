@@ -3,11 +3,11 @@ import logging
 import re
 from typing import Any, TypeVar
 
+from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_groq import ChatGroq
 from pydantic import BaseModel, ValidationError
 
-from backend.config import GROQ_API_KEY, GROQ_MODEL
+from backend.agent.providers import LLMConfig, build_chat_model, resolve_llm_config
 
 logger = logging.getLogger(__name__)
 
@@ -16,17 +16,36 @@ T = TypeVar("T", bound=BaseModel)
 JSON_FENCE_PATTERN = re.compile(r"```(?:json)?\s*\n?(.*?)\n?```", re.DOTALL)
 MAX_RETRIES = 2
 
-PARSE_ERRORS = (ValidationError, ValueError, json.JSONDecodeError)
+PARSE_ERRORS = (ValidationError, ValueError, json.JSONDecodeError, KeyError)
+
+JSON_REPLY_INSTRUCTION = (
+    "\n\nRespond with ONLY a single JSON object matching the schema below. "
+    "No markdown fences, no extra text. "
+    'Use lowercase action values "investigate" or "verdict". '
+    "Booleans must be true/false (not strings). Use null for empty optional fields."
+)
 
 
 class StructuredOutputError(ValueError):
     """The model could not produce output matching the requested schema."""
 
 
-def get_llm() -> ChatGroq:
-    if not GROQ_API_KEY:
-        raise ValueError("GROQ_API_KEY is not set. Add it to your .env file.")
-    return ChatGroq(model=GROQ_MODEL, api_key=GROQ_API_KEY, temperature=0)
+class LLMRateLimitError(Exception):
+    """Upstream LLM quota exhausted (HTTP 429 or vendor-specific equivalent)."""
+
+    def __init__(self, provider: str, message: str):
+        self.provider = provider
+        super().__init__(message)
+
+
+def is_rate_limit_error(exc: Exception) -> bool:
+    if getattr(exc, "status_code", None) == 429:
+        return True
+    return type(exc).__name__ in {"RateLimitError", "ResourceExhausted"}
+
+
+def get_llm(llm_config: LLMConfig | None = None) -> BaseChatModel:
+    return build_chat_model(llm_config or resolve_llm_config())
 
 
 def extract_json(text: str) -> str:
@@ -49,12 +68,7 @@ def parse_structured_response(text: str, model: type[T]) -> T:
 
 
 def failed_tool_call_payload(exc: Exception) -> str | None:
-    """Return the model's raw generation when Groq rejects a malformed tool call.
-
-    Groq validates tool arguments server-side and answers with HTTP 400
-    (`tool_use_failed`) instead of a parseable response. The generation itself is
-    included in the error body and is usually salvageable after coercion.
-    """
+    """Return the model's raw generation when Groq rejects a malformed tool call."""
     body: Any = getattr(exc, "body", None)
     if not isinstance(body, dict):
         return None
@@ -65,21 +79,71 @@ def failed_tool_call_payload(exc: Exception) -> str | None:
     return generation if isinstance(generation, str) else None
 
 
-async def invoke_structured(
+def _schema_prompt(system_prompt: str, model: type[BaseModel]) -> str:
+    schema = json.dumps(model.model_json_schema(), indent=2)
+    return f"{system_prompt}{JSON_REPLY_INSTRUCTION}\n\nSchema:\n{schema}"
+
+
+async def _invoke_json_mode(
     system_prompt: str,
     user_prompt: str,
     model: type[T],
+    llm_config: LLMConfig,
 ) -> T:
-    llm = get_llm()
-    structured_llm = llm.with_structured_output(model)
+    """Plain JSON generation — used for Gemini, which mis-names tool calls."""
+    llm = get_llm(llm_config)
+    messages = [
+        SystemMessage(content=_schema_prompt(system_prompt, model)),
+        HumanMessage(content=user_prompt),
+    ]
+    last_error: Exception | None = None
 
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            response = await llm.ainvoke(messages)
+            content = (
+                response.content
+                if isinstance(response.content, str)
+                else str(response.content)
+            )
+            logger.debug("JSON mode response (attempt %d): %s", attempt + 1, content[:500])
+            result = parse_structured_response(content, model)
+            logger.info("  llm ok | attempt=%d schema=%s (json mode)", attempt + 1, model.__name__)
+            return result
+        except PARSE_ERRORS as exc:
+            last_error = exc
+            logger.warning("  llm json attempt %d failed: %s", attempt + 1, exc)
+            messages.append(
+                HumanMessage(
+                    content="Your previous response was not valid JSON for the schema. "
+                    "Reply with ONLY a corrected JSON object."
+                )
+            )
+        except Exception as exc:
+            if is_rate_limit_error(exc):
+                raise LLMRateLimitError(llm_config.provider, str(exc)) from exc
+            raise
+
+    raise StructuredOutputError(
+        f"Failed to parse structured response after retries: {last_error}"
+    )
+
+
+async def _invoke_tool_mode(
+    system_prompt: str,
+    user_prompt: str,
+    model: type[T],
+    llm_config: LLMConfig,
+) -> T:
+    """Native structured output via tool binding — reliable on Groq."""
+    llm = get_llm(llm_config)
+    structured_llm = llm.with_structured_output(model)
     messages = [
         SystemMessage(content=system_prompt),
         HumanMessage(content=user_prompt),
     ]
-
-    logger.info("  llm call | model=%s schema=%s", GROQ_MODEL, model.__name__)
     last_error: Exception | None = None
+
     for attempt in range(MAX_RETRIES + 1):
         try:
             result = await structured_llm.ainvoke(messages)
@@ -101,35 +165,38 @@ async def invoke_structured(
                     last_error = parse_exc
                     logger.warning("  llm attempt %d | salvage failed: %s", attempt + 1, parse_exc)
                 else:
-                    logger.info("  llm ok | attempt=%d recovered from rejected tool call", attempt + 1)
+                    logger.info(
+                        "  llm ok | attempt=%d recovered from rejected tool call", attempt + 1
+                    )
                     return salvaged
             elif isinstance(exc, PARSE_ERRORS):
                 last_error = exc
                 logger.warning("  llm attempt %d | invalid structured output: %s", attempt + 1, exc)
+            elif is_rate_limit_error(exc):
+                raise LLMRateLimitError(llm_config.provider, str(exc)) from exc
             else:
                 raise
 
     logger.info("  llm fallback | retrying with raw JSON parsing")
-    raw_llm = get_llm()
-    messages.append(
-        HumanMessage(
-            content="Your previous response was not valid JSON matching the required schema. "
-            "Respond with ONLY a valid JSON object, no markdown fences or extra text. "
-            "Use real JSON types: booleans must be true/false and empty values must be null, "
-            "never the strings \"true\" or \"null\"."
-        )
-    )
-    for attempt in range(MAX_RETRIES + 1):
-        try:
-            response = await raw_llm.ainvoke(messages)
-            content = response.content if isinstance(response.content, str) else str(response.content)
-            logger.debug("Raw model response (retry %d): %s", attempt + 1, content[:500])
-            return parse_structured_response(content, model)
-        except PARSE_ERRORS as exc:
-            last_error = exc
-            logger.warning("  llm raw parse attempt %d failed: %s", attempt + 1, exc)
+    return await _invoke_json_mode(system_prompt, user_prompt, model, llm_config)
 
-    logger.error("All structured output attempts failed for schema %s", model.__name__)
-    raise StructuredOutputError(
-        f"Failed to parse structured response after retries: {last_error}"
+
+async def invoke_structured(
+    system_prompt: str,
+    user_prompt: str,
+    model: type[T],
+    llm_config: LLMConfig | None = None,
+) -> T:
+    llm_config = llm_config or resolve_llm_config()
+
+    logger.info(
+        "  llm call | provider=%s model=%s schema=%s",
+        llm_config.provider,
+        llm_config.model,
+        model.__name__,
     )
+
+    if llm_config.provider == "google":
+        return await _invoke_json_mode(system_prompt, user_prompt, model, llm_config)
+
+    return await _invoke_tool_mode(system_prompt, user_prompt, model, llm_config)

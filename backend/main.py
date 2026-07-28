@@ -1,8 +1,11 @@
 import logging
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
 
-from backend.agent.llm import StructuredOutputError
+from backend.agent.llm import LLMRateLimitError, StructuredOutputError
+from backend.agent.providers import available_providers, resolve_llm_config
 from backend.github.client import GitHubAPIError
 from backend.logging_config import setup_logging
 from backend.models.api import ReviewRequest
@@ -20,11 +23,34 @@ async def health():
     return {"status": "ok"}
 
 
+@app.get("/api/providers")
+async def list_providers():
+    """Vendors the UI can offer. Contains no key material."""
+    return {"providers": available_providers()}
+
+
 @app.post("/api/review", response_model=ReviewVerdict)
 async def create_review(request: ReviewRequest) -> ReviewVerdict:
-    logger.info("POST /api/review | mode=%s url=%s", request.mode, request.pr_url)
+    settings = request.llm
+    logger.info(
+        "POST /api/review | mode=%s provider=%s url=%s",
+        request.mode,
+        (settings.provider if settings else None) or "default",
+        request.pr_url,
+    )
     try:
-        return await run_review(request.pr_url, request.mode)
+        llm_config = resolve_llm_config(
+            provider=settings.provider if settings else None,
+            model=settings.model if settings else None,
+            api_key=settings.api_key if settings else None,
+        )
+        return await run_review(request.pr_url, request.mode, llm_config=llm_config)
+    except LLMRateLimitError as exc:
+        logger.warning("Responding 429 | all providers rate-limited: %s", exc)
+        raise HTTPException(
+            status_code=429,
+            detail="LLM rate limit reached on all configured providers. Please retry later.",
+        ) from exc
     except StructuredOutputError as exc:
         logger.error("Responding 500 | model output unusable: %s", exc)
         raise HTTPException(
@@ -53,3 +79,8 @@ async def create_review(request: ReviewRequest) -> ReviewVerdict:
         raise HTTPException(
             status_code=500, detail=f"Unexpected error: {type(exc).__name__}"
         ) from exc
+
+
+static_dir = Path(__file__).resolve().parent.parent / "static"
+if static_dir.is_dir():
+    app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")

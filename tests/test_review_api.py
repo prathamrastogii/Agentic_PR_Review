@@ -35,6 +35,20 @@ async def test_health(client):
 
 
 @pytest.mark.asyncio
+async def test_index_html_served(client):
+    response = await client.get("/")
+    assert response.status_code == 200
+    assert "PR review agent" in response.text
+
+
+@pytest.mark.asyncio
+async def test_static_assets_served(client):
+    response = await client.get("/style.css")
+    assert response.status_code == 200
+    assert "EDE0CE" in response.text or "#ede0ce" in response.text.lower()
+
+
+@pytest.mark.asyncio
 @patch("backend.main.run_review", new_callable=AsyncMock)
 async def test_review_agent_mode(mock_run_review, client):
     mock_run_review.return_value = _sample_verdict(
@@ -53,10 +67,9 @@ async def test_review_agent_mode(mock_run_review, client):
     payload = response.json()
     assert payload["summary"] == "Looks good"
     assert len(payload["investigation_trail"]) == 1
-    mock_run_review.assert_awaited_once_with(
-        "https://github.com/octo/repo/pull/1",
-        "agent",
-    )
+    args, kwargs = mock_run_review.await_args
+    assert args == ("https://github.com/octo/repo/pull/1", "agent")
+    assert kwargs["llm_config"].provider == "groq"
 
 
 @pytest.mark.asyncio
@@ -70,10 +83,8 @@ async def test_review_baseline_mode_default(mock_run_review, client):
     )
 
     assert response.status_code == 200
-    mock_run_review.assert_awaited_once_with(
-        "https://github.com/octo/repo/pull/1",
-        "agent",
-    )
+    args, _ = mock_run_review.await_args
+    assert args == ("https://github.com/octo/repo/pull/1", "agent")
 
 
 @pytest.mark.asyncio

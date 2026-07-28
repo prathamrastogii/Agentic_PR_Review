@@ -56,6 +56,7 @@ async def run_agent_review(
     files: list,
     github_client: GitHubClient,
     max_investigations: int,
+    llm_config=None,
 ) -> "ReviewVerdict":
     from backend.config import MAX_INVESTIGATIONS
     from backend.models.review import ReviewVerdict
@@ -63,6 +64,7 @@ async def run_agent_review(
     budget = max_investigations or MAX_INVESTIGATIONS
     initial_state: AgentState = {
         "pr_metadata": metadata,
+        "llm_config": llm_config,
         "diffs": files,
         "fetched_files": {},
         "unavailable_files": {},

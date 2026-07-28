@@ -59,7 +59,9 @@ def build_baseline_prompt(metadata: PRMetadata, files: list[FileDiff]) -> str:
 
 
 async def review_pr_baseline(
-    metadata: PRMetadata, files: list[FileDiff]
+    metadata: PRMetadata,
+    files: list[FileDiff],
+    llm_config=None,
 ) -> ReviewVerdict:
     from backend.agent.llm import invoke_structured
     from backend.agent.prompts import BASELINE_SYSTEM_PROMPT
@@ -69,7 +71,7 @@ async def review_pr_baseline(
         "> baseline | %d diff(s), prompt_chars=%d", len(files), len(user_prompt)
     )
     verdict = await invoke_structured(
-        BASELINE_SYSTEM_PROMPT, user_prompt, ReviewVerdict
+        BASELINE_SYSTEM_PROMPT, user_prompt, ReviewVerdict, llm_config
     )
     verdict.investigation_trail = []
     verdict.partial_investigation = False
