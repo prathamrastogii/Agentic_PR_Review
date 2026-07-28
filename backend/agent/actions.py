@@ -1,8 +1,15 @@
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from backend.models.review import ReviewIssue, ReviewVerdict
+from backend.models.review import (
+    ReviewIssue,
+    ReviewVerdict,
+    coerce_bool,
+    coerce_null,
+)
+
+OPTIONAL_STRING_FIELDS = ("file_path", "reason", "summary", "confidence")
 
 
 class EvaluateResponse(BaseModel):
@@ -13,6 +20,21 @@ class EvaluateResponse(BaseModel):
     issues: list[ReviewIssue] = Field(default_factory=list)
     confidence: Literal["high", "medium", "low"] | None = None
     partial_investigation: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_model_output(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        normalized = dict(data)
+        for field in OPTIONAL_STRING_FIELDS:
+            if field in normalized:
+                normalized[field] = coerce_null(normalized[field])
+        if "partial_investigation" in normalized:
+            normalized["partial_investigation"] = coerce_bool(
+                normalized["partial_investigation"]
+            )
+        return normalized
 
     @model_validator(mode="after")
     def validate_action_fields(self) -> "EvaluateResponse":

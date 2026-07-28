@@ -7,6 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from backend.logging_config import setup_logging
 from backend.services.review_service import run_review
 
 
@@ -15,6 +16,7 @@ async def main() -> None:
         print("Usage: python scripts/baseline_review.py <pr_url>")
         sys.exit(1)
 
+    setup_logging()
     verdict = await run_review(sys.argv[1], mode="baseline")
     print(json.dumps(verdict.model_dump(), indent=2))
 

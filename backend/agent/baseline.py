@@ -1,5 +1,9 @@
+import logging
+
 from backend.github.models import FileDiff, PRMetadata
 from backend.models.review import ReviewVerdict
+
+logger = logging.getLogger(__name__)
 
 MAX_CHARS_PER_FILE = 8000
 MAX_TOTAL_DIFF_CHARS = 50000
@@ -61,9 +65,17 @@ async def review_pr_baseline(
     from backend.agent.prompts import BASELINE_SYSTEM_PROMPT
 
     user_prompt = build_baseline_prompt(metadata, files)
+    logger.info(
+        "> baseline | %d diff(s), prompt_chars=%d", len(files), len(user_prompt)
+    )
     verdict = await invoke_structured(
         BASELINE_SYSTEM_PROMPT, user_prompt, ReviewVerdict
     )
     verdict.investigation_trail = []
     verdict.partial_investigation = False
+    logger.info(
+        "> baseline done | issues=%d confidence=%s",
+        len(verdict.issues),
+        verdict.confidence,
+    )
     return verdict
