@@ -120,6 +120,36 @@ async def test_review_github_error_returns_502(mock_run_review, client):
 
 @pytest.mark.asyncio
 @patch("backend.main.run_review", new_callable=AsyncMock)
+async def test_llm_rate_limit_returns_429(mock_run_review, client):
+    rate_limited = Exception("Error code: 429 - tokens per day exceeded")
+    rate_limited.status_code = 429
+    mock_run_review.side_effect = rate_limited
+
+    response = await client.post(
+        "/api/review",
+        json={"pr_url": "https://github.com/octo/repo/pull/1"},
+    )
+
+    assert response.status_code == 429
+    assert "rate limit" in response.json()["detail"].lower()
+
+
+@pytest.mark.asyncio
+@patch("backend.main.run_review", new_callable=AsyncMock)
+async def test_unexpected_error_returns_500(mock_run_review, client):
+    mock_run_review.side_effect = TypeError("something odd")
+
+    response = await client.post(
+        "/api/review",
+        json={"pr_url": "https://github.com/octo/repo/pull/1"},
+    )
+
+    assert response.status_code == 500
+    assert "TypeError" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+@patch("backend.main.run_review", new_callable=AsyncMock)
 async def test_review_agent_failure_returns_500(mock_run_review, client):
     mock_run_review.side_effect = RuntimeError("Agent finished without producing a verdict")
 

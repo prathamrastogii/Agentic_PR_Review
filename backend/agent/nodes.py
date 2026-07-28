@@ -1,12 +1,30 @@
+import logging
+
 from backend.agent.baseline import format_diffs
 from backend.agent.actions import EvaluateResponse
-from backend.agent.llm import invoke_structured
-from backend.agent.prompts import BUDGET_EXHAUSTED_PROMPT, EVALUATE_SYSTEM_PROMPT
+from backend.agent.llm import StructuredOutputError, invoke_structured
+from backend.agent.prompts import (
+    BUDGET_EXHAUSTED_PROMPT,
+    CHALLENGE_PROMPT,
+    EVALUATE_SYSTEM_PROMPT,
+)
 from backend.agent.state import AgentState
-from backend.github.client import GitHubClient
+from backend.github.client import GitHubAPIError, GitHubClient
+from backend.github.models import FileDiff
 from backend.models.review import InvestigationStep, ReviewVerdict
 
+logger = logging.getLogger(__name__)
+
 MAX_CHARS_FETCHED_FILE = 12000
+
+# Diffs at or below this many changed lines are treated as trivial enough that a
+# no-investigation verdict is credible.
+TRIVIAL_DIFF_LINES = 10
+
+# A guessed path can legitimately not exist (standard library symbols, wrong
+# directory). Those are the model's mistakes to recover from, unlike auth
+# failures or rate limits, which must surface to the caller.
+RECOVERABLE_FETCH_STATUSES = frozenset({400, 404, 422})
 
 
 def _format_fetched_files(fetched_files: dict[str, str]) -> str:
@@ -20,6 +38,43 @@ def _format_fetched_files(fetched_files: dict[str, str]) -> str:
     return "\n\n".join(parts)
 
 
+def _format_unavailable(unavailable_files: dict[str, str]) -> str:
+    if not unavailable_files:
+        return ""
+    lines = "\n".join(
+        f"- {path}: {error}" for path, error in unavailable_files.items()
+    )
+    return (
+        "\n\n## Paths that do not exist at this commit\n\n"
+        f"{lines}\n\n"
+        "Do not request these again. They may be standard library or third-party "
+        "symbols, or the path may be wrong."
+    )
+
+
+def _format_trail(trail: list[InvestigationStep]) -> str:
+    if not trail:
+        return ""
+    steps = "\n".join(
+        f"{i}. {step.file_path} — {step.reason}" for i, step in enumerate(trail, 1)
+    )
+    return f"\n\n## Files you already investigated\n\n{steps}"
+
+
+def changed_line_count(diffs: list[FileDiff]) -> int:
+    """Size of the change in lines, falling back to counting patch lines."""
+    reported = sum(diff.changes for diff in diffs)
+    if reported:
+        return reported
+    return sum(
+        1
+        for diff in diffs
+        if diff.patch
+        for line in diff.patch.splitlines()
+        if line.startswith(("+", "-")) and not line.startswith(("+++", "---"))
+    )
+
+
 def build_evaluate_prompt(state: AgentState) -> str:
     metadata = state["pr_metadata"]
     diff_text, truncated = format_diffs(state["diffs"])
@@ -31,8 +86,8 @@ def build_evaluate_prompt(state: AgentState) -> str:
     body_section = f"\nDescription:\n{metadata.body}" if metadata.body else ""
     remaining = state["max_investigations"] - state["investigation_count"]
     fetched_section = _format_fetched_files(state["fetched_files"])
-    dedup_note = state.get("dedup_note")
-    dedup_section = f"\n\n{dedup_note}" if dedup_note else ""
+    feedback_note = state.get("feedback_note")
+    feedback_section = f"\n\n{feedback_note}" if feedback_note else ""
 
     return (
         f"Pull Request: {metadata.title}\n"
@@ -42,19 +97,74 @@ def build_evaluate_prompt(state: AgentState) -> str:
         f"{body_section}\n\n"
         f"Investigation budget remaining: {remaining} of {state['max_investigations']}\n\n"
         f"## Changed files ({len(state['diffs'])})\n\n{diff_text}"
-        f"{truncation_note}\n\n"
+        f"{truncation_note}"
+        f"{_format_trail(state['investigation_trail'])}\n\n"
         f"## Fetched files\n\n{fetched_section}"
-        f"{dedup_section}"
+        f"{_format_unavailable(state.get('unavailable_files') or {})}"
+        f"{feedback_section}"
+    )
+
+
+def _fallback_verdict(state: AgentState) -> dict:
+    """Honest low-confidence verdict for when the model never returns valid output.
+
+    Preserves the investigation trail so completed work is not thrown away.
+    """
+    verdict = ReviewVerdict(
+        summary=(
+            "Review incomplete: the model did not return a valid structured verdict "
+            "after several attempts. Any files listed in the investigation trail were "
+            "fetched successfully, but no reliable findings could be produced."
+        ),
+        issues=[],
+        confidence="low",
+        partial_investigation=True,
+        investigation_trail=list(state["investigation_trail"]),
+    )
+    return {
+        "verdict": verdict,
+        "pending_file_request": None,
+        "pending_reason": None,
+        "feedback_note": None,
+    }
+
+
+def _should_challenge(state: AgentState, response: EvaluateResponse) -> bool:
+    """True when the model claims certainty about code it never opened.
+
+    Fires at most once per run: any investigation makes `investigation_count`
+    non-zero, and accepting the verdict ends the graph.
+    """
+    return (
+        response.action == "verdict"
+        and response.confidence == "high"
+        and state["investigation_count"] == 0
+        and changed_line_count(state["diffs"]) > TRIVIAL_DIFF_LINES
     )
 
 
 async def evaluate_node(state: AgentState) -> dict:
     budget_remaining = state["max_investigations"] - state["investigation_count"]
     user_prompt = build_evaluate_prompt(state)
+    logger.info(
+        "> evaluate | budget_remaining=%d fetched_files=%d prompt_chars=%d",
+        budget_remaining,
+        len(state["fetched_files"]),
+        len(user_prompt),
+    )
 
     if budget_remaining <= 0 and state["verdict"] is None:
+        logger.warning(
+            "> evaluate | budget exhausted, forcing best-effort final verdict"
+        )
         system_prompt = f"{EVALUATE_SYSTEM_PROMPT}\n\n{BUDGET_EXHAUSTED_PROMPT}"
-        response = await invoke_structured(system_prompt, user_prompt, EvaluateResponse)
+        try:
+            response = await invoke_structured(
+                system_prompt, user_prompt, EvaluateResponse
+            )
+        except StructuredOutputError as exc:
+            logger.error("> evaluate | final verdict unusable, falling back: %s", exc)
+            return _fallback_verdict(state)
         if response.action != "verdict":
             response = EvaluateResponse(
                 action="verdict",
@@ -67,39 +177,81 @@ async def evaluate_node(state: AgentState) -> dict:
         verdict.partial_investigation = True
         if verdict.confidence == "high":
             verdict.confidence = "medium"
+        logger.info(
+            "> evaluate -> partial verdict | issues=%d confidence=%s",
+            len(verdict.issues),
+            verdict.confidence,
+        )
         return {
             "verdict": verdict,
             "pending_file_request": None,
             "pending_reason": None,
-            "dedup_note": None,
+            "feedback_note": None,
         }
 
-    response = await invoke_structured(EVALUATE_SYSTEM_PROMPT, user_prompt, EvaluateResponse)
+    try:
+        response = await invoke_structured(
+            EVALUATE_SYSTEM_PROMPT, user_prompt, EvaluateResponse
+        )
+    except StructuredOutputError as exc:
+        logger.error("> evaluate | no usable response, falling back: %s", exc)
+        return _fallback_verdict(state)
+
+    if _should_challenge(state, response):
+        logger.info(
+            "> evaluate | challenging unearned high confidence (%d changed lines, 0 files read)",
+            changed_line_count(state["diffs"]),
+        )
+        try:
+            response = await invoke_structured(
+                f"{EVALUATE_SYSTEM_PROMPT}\n\n{CHALLENGE_PROMPT}",
+                user_prompt,
+                EvaluateResponse,
+            )
+        except StructuredOutputError as exc:
+            logger.warning(
+                "> evaluate | challenge unusable, keeping original verdict: %s", exc
+            )
+        else:
+            logger.info("> evaluate | after challenge -> %s", response.action)
 
     if response.action == "verdict":
         verdict = response.to_verdict(state["investigation_trail"])
+        logger.info(
+            "> evaluate -> verdict | issues=%d confidence=%s",
+            len(verdict.issues),
+            verdict.confidence,
+        )
         return {
             "verdict": verdict,
             "pending_file_request": None,
             "pending_reason": None,
-            "dedup_note": None,
+            "feedback_note": None,
         }
 
     file_path = response.file_path or ""
-    if file_path in state["fetched_files"]:
+    unavailable = state.get("unavailable_files") or {}
+    if file_path in state["fetched_files"] or file_path in unavailable:
+        already = "already fetched" if file_path in state["fetched_files"] else "known missing"
+        logger.info(
+            "> evaluate -> dedup | %r %s, re-evaluating without cost", file_path, already
+        )
         return {
             "pending_file_request": None,
             "pending_reason": None,
-            "dedup_note": (
-                f"Note: You requested '{file_path}' but it is already in the fetched files section. "
+            "feedback_note": (
+                f"Note: You requested '{file_path}', which is {already}. "
                 "Produce a verdict or request a different file."
             ),
         }
 
+    logger.info(
+        "> evaluate -> investigate | file=%s reason=%s", file_path, response.reason
+    )
     return {
         "pending_file_request": file_path,
         "pending_reason": response.reason,
-        "dedup_note": None,
+        "feedback_note": None,
     }
 
 
@@ -107,12 +259,43 @@ async def fetch_file_node(state: AgentState, github_client: GitHubClient) -> dic
     path = state["pending_file_request"]
     reason = state["pending_reason"]
     if not path or not reason:
+        logger.warning("> fetch_file | skipped, no pending file request in state")
         return {}
 
     metadata = state["pr_metadata"]
-    content = await github_client.get_file_content(
-        metadata.owner, metadata.repo, path, metadata.head_sha
+    logger.info(
+        "> fetch_file | investigation %d/%d: %s @ %s",
+        state["investigation_count"] + 1,
+        state["max_investigations"],
+        path,
+        metadata.head_sha[:7],
     )
+    try:
+        content = await github_client.get_file_content(
+            metadata.owner, metadata.repo, path, metadata.head_sha
+        )
+    except GitHubAPIError as exc:
+        if exc.status_code not in RECOVERABLE_FETCH_STATUSES:
+            raise
+        logger.warning(
+            "> fetch_file unavailable | %s (%d: %s), letting the agent try again",
+            path,
+            exc.status_code,
+            exc.message,
+        )
+        return {
+            "unavailable_files": {**(state.get("unavailable_files") or {}), path: exc.message},
+            "investigation_count": state["investigation_count"] + 1,
+            "pending_file_request": None,
+            "pending_reason": None,
+            "feedback_note": (
+                f"Note: '{path}' could not be fetched ({exc.message}). It does not exist at "
+                "this commit, so it may be a standard library or third-party symbol, or the "
+                "path may be wrong. Request a different file or produce a verdict."
+            ),
+        }
+
+    logger.info("> fetch_file done | %s (%d chars)", path, len(content))
     trail = list(state["investigation_trail"]) + [
         InvestigationStep(file_path=path, reason=reason)
     ]
@@ -123,5 +306,5 @@ async def fetch_file_node(state: AgentState, github_client: GitHubClient) -> dic
         "investigation_trail": trail,
         "pending_file_request": None,
         "pending_reason": None,
-        "dedup_note": None,
+        "feedback_note": None,
     }

@@ -1,3 +1,4 @@
+import logging
 from typing import Literal
 
 from langgraph.graph import END, StateGraph
@@ -6,11 +7,13 @@ from backend.agent.nodes import evaluate_node, fetch_file_node
 from backend.agent.state import AgentState
 from backend.github.client import GitHubClient
 
+logger = logging.getLogger(__name__)
 
-def route_after_evaluate(state: AgentState) -> Literal["fetch_file", "evaluate", "end"]:
+
+def _decide_route(state: AgentState) -> Literal["fetch_file", "evaluate", "end"]:
     if state.get("verdict") is not None:
         return "end"
-    if state.get("dedup_note"):
+    if state.get("feedback_note"):
         return "evaluate"
     pending = state.get("pending_file_request")
     if pending and state["investigation_count"] < state["max_investigations"]:
@@ -18,6 +21,17 @@ def route_after_evaluate(state: AgentState) -> Literal["fetch_file", "evaluate",
     if state["investigation_count"] >= state["max_investigations"]:
         return "evaluate"
     return "end"
+
+
+def route_after_evaluate(state: AgentState) -> Literal["fetch_file", "evaluate", "end"]:
+    decision = _decide_route(state)
+    logger.info(
+        "  route | next=%s (investigations %d/%d)",
+        decision,
+        state["investigation_count"],
+        state["max_investigations"],
+    )
+    return decision
 
 
 def build_review_graph(github_client: GitHubClient):
@@ -51,18 +65,34 @@ async def run_agent_review(
         "pr_metadata": metadata,
         "diffs": files,
         "fetched_files": {},
+        "unavailable_files": {},
         "investigation_count": 0,
         "max_investigations": budget,
         "investigation_trail": [],
         "pending_file_request": None,
         "pending_reason": None,
         "verdict": None,
-        "dedup_note": None,
+        "feedback_note": None,
     }
 
+    logger.info(
+        "Agent loop starting | %d diff(s), max_investigations=%d", len(files), budget
+    )
     graph = build_review_graph(github_client)
     result = await graph.ainvoke(initial_state, config={"recursion_limit": 25})
+
     verdict = result.get("verdict")
     if verdict is None:
+        logger.error("Agent loop ended with no verdict in state")
         raise RuntimeError("Agent finished without producing a verdict")
+
+    unavailable = result.get("unavailable_files") or {}
+    logger.info(
+        "Agent loop complete | %d investigation(s) used: %s%s",
+        result["investigation_count"],
+        ", ".join(step.file_path for step in verdict.investigation_trail) or "none",
+        f" | {len(unavailable)} unavailable path(s): {', '.join(unavailable)}"
+        if unavailable
+        else "",
+    )
     return verdict
