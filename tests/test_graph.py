@@ -4,7 +4,12 @@ import pytest
 
 from backend.agent.actions import EvaluateResponse
 from backend.agent.graph import build_review_graph, route_after_evaluate, run_agent_review
-from backend.agent.nodes import changed_line_count, evaluate_node, fetch_file_node
+from backend.agent.nodes import (
+    _pick_investigation_target,
+    changed_line_count,
+    evaluate_node,
+    fetch_file_node,
+)
 from backend.agent.state import AgentState
 from backend.github.client import GitHubAPIError, GitHubClient
 from backend.github.models import FileDiff, PRMetadata
@@ -28,6 +33,7 @@ def _metadata() -> PRMetadata:
 def _initial_state(**overrides) -> AgentState:
     state: AgentState = {
         "pr_metadata": _metadata(),
+        "llm_config": None,
         "diffs": [
             FileDiff(
                 filename="app.py",
@@ -455,3 +461,53 @@ async def test_no_challenge_after_an_investigation():
 
     assert mock.await_count == 1
     assert result["verdict"].summary == "Checked it"
+
+
+def _multi_file_state(**overrides):
+    return _initial_state(
+        diffs=[
+            FileDiff(
+                filename="core/src/main/java/com/example/DateTimeUtils.java",
+                status="modified",
+                patch="@@ x @@",
+                changes=40,
+            ),
+            FileDiff(
+                filename="core/src/test/java/com/example/DateTimeUtilsTest.java",
+                status="modified",
+                patch="@@ x @@",
+                changes=30,
+            ),
+            FileDiff(
+                filename="ui-next/src/pages/agent/Skills.tsx",
+                status="modified",
+                patch="@@ x @@",
+                changes=25,
+            ),
+        ],
+        **overrides,
+    )
+
+
+@pytest.mark.asyncio
+async def test_multi_file_verdict_is_forced_to_investigate():
+    stubborn = EvaluateResponse(action="verdict", summary="All good", confidence="high")
+    mock = AsyncMock(side_effect=[stubborn, stubborn])
+
+    with patch("backend.agent.nodes.invoke_structured", new=mock):
+        result = await evaluate_node(_multi_file_state())
+
+    assert mock.await_count == 2
+    assert (
+        result["pending_file_request"]
+        == "core/src/main/java/com/example/DateTimeUtils.java"
+    )
+    assert "Mandatory first investigation" in result["pending_reason"]
+
+
+def test_pick_investigation_target_prefers_non_test_file():
+    diffs = [
+        FileDiff(filename="core/src/test/FooTest.java", status="modified", changes=50),
+        FileDiff(filename="core/src/main/Foo.java", status="modified", changes=20),
+    ]
+    assert _pick_investigation_target(diffs) == "core/src/main/Foo.java"

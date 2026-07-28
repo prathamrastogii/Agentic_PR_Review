@@ -4,10 +4,12 @@ import pytest
 
 from backend.agent.actions import EvaluateResponse
 from backend.agent.llm import (
+    LLMRateLimitError,
     StructuredOutputError,
     failed_tool_call_payload,
     invoke_structured,
 )
+from backend.agent.providers import LLMConfig
 from backend.models.review import ReviewVerdict
 
 
@@ -25,6 +27,10 @@ class FakeGroqBadRequest(Exception):
                 "failed_generation": failed_generation,
             }
         }
+
+
+class RateLimitError(Exception):
+    status_code = 429
 
 
 REJECTED_GENERATION = (
@@ -142,5 +148,48 @@ async def test_non_parse_errors_are_not_retried():
     with patch("backend.agent.llm.get_llm", return_value=llm):
         with pytest.raises(ConnectionError):
             await invoke_structured("system", "user", EvaluateResponse)
+
+    assert structured_llm.ainvoke.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_google_uses_json_mode_not_tool_binding():
+    llm = MagicMock()
+    llm.with_structured_output = MagicMock()
+    response = MagicMock()
+    response.content = (
+        '{"action":"investigate","file_path":"helpers.py",'
+        '"reason":"need definition","issues":[]}'
+    )
+    llm.ainvoke = AsyncMock(return_value=response)
+
+    with patch("backend.agent.llm.get_llm", return_value=llm):
+        result = await invoke_structured(
+            "system",
+            "user",
+            EvaluateResponse,
+            LLMConfig(provider="google", model="gemini-3.5-flash-lite", api_key="k"),
+        )
+
+    llm.with_structured_output.assert_not_called()
+    assert result.action == "investigate"
+    assert result.file_path == "helpers.py"
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_raises_llm_rate_limit_error():
+    rate_limited = RateLimitError("TPD exceeded")
+    llm, structured_llm = fake_llm(rate_limited)
+
+    with patch("backend.agent.llm.get_llm", return_value=llm):
+        with pytest.raises(LLMRateLimitError) as raised:
+            await invoke_structured(
+                "system",
+                "user",
+                EvaluateResponse,
+                LLMConfig(provider="groq", model="m", api_key="k"),
+            )
+
+    assert raised.value.provider == "groq"
 
     assert structured_llm.ainvoke.await_count == 1

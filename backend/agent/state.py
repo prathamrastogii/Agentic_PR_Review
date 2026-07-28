@@ -1,11 +1,13 @@
 from typing import TypedDict
 
+from backend.agent.providers import LLMConfig
 from backend.github.models import FileDiff, PRMetadata
 from backend.models.review import InvestigationStep, ReviewVerdict
 
 
 class AgentState(TypedDict):
     pr_metadata: PRMetadata
+    llm_config: LLMConfig | None
     diffs: list[FileDiff]
     fetched_files: dict[str, str]
     unavailable_files: dict[str, str]

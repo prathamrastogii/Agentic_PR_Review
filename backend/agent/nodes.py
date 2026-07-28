@@ -20,6 +20,8 @@ MAX_CHARS_FETCHED_FILE = 12000
 # Diffs at or below this many changed lines are treated as trivial enough that a
 # no-investigation verdict is credible.
 TRIVIAL_DIFF_LINES = 10
+# Multi-file PRs must open at least one file before a verdict is accepted.
+MANDATORY_INVESTIGATION_MIN_FILES = 2
 
 # A guessed path can legitimately not exist (standard library symbols, wrong
 # directory). Those are the model's mistakes to recover from, unlike auth
@@ -129,18 +131,67 @@ def _fallback_verdict(state: AgentState) -> dict:
     }
 
 
-def _should_challenge(state: AgentState, response: EvaluateResponse) -> bool:
-    """True when the model claims certainty about code it never opened.
-
-    Fires at most once per run: any investigation makes `investigation_count`
-    non-zero, and accepting the verdict ends the graph.
-    """
+def _is_test_file(path: str) -> bool:
+    normalized = path.replace("\\", "/").lower()
+    name = normalized.rsplit("/", 1)[-1]
     return (
-        response.action == "verdict"
-        and response.confidence == "high"
-        and state["investigation_count"] == 0
+        "/test/" in normalized
+        or "/tests/" in normalized
+        or normalized.startswith("test/")
+        or name.startswith("test_")
+        or name.endswith("_test.py")
+        or name.endswith("test.java")
+        or ".test." in name
+        or ".spec." in name
+    )
+
+
+def _pick_investigation_target(diffs: list[FileDiff]) -> str:
+    """Choose the most informative non-test file when the model skips investigation."""
+    candidates = [
+        diff
+        for diff in diffs
+        if diff.status != "removed" and not _is_test_file(diff.filename)
+    ] or [diff for diff in diffs if diff.status != "removed"] or list(diffs)
+    return max(candidates, key=lambda diff: (diff.changes, diff.filename)).filename
+
+
+def _should_challenge(state: AgentState, response: EvaluateResponse) -> bool:
+    """True when a verdict is suspicious without any file reads."""
+    if response.action != "verdict" or state["investigation_count"] != 0:
+        return False
+    if len(state["diffs"]) >= MANDATORY_INVESTIGATION_MIN_FILES:
+        return True
+    return (
+        response.confidence == "high"
         and changed_line_count(state["diffs"]) > TRIVIAL_DIFF_LINES
     )
+
+
+def _enforce_mandatory_investigation(
+    state: AgentState, response: EvaluateResponse
+) -> EvaluateResponse:
+    """Code-level backstop when the model still skips investigation on multi-file PRs."""
+    if (
+        response.action == "verdict"
+        and state["investigation_count"] == 0
+        and len(state["diffs"]) >= MANDATORY_INVESTIGATION_MIN_FILES
+    ):
+        target = _pick_investigation_target(state["diffs"])
+        logger.warning(
+            "> evaluate | forcing investigation of %s (%d files changed, 0 files read)",
+            target,
+            len(state["diffs"]),
+        )
+        return EvaluateResponse(
+            action="investigate",
+            file_path=target,
+            reason=(
+                "Mandatory first investigation: this PR changes multiple files and no "
+                "out-of-diff context has been loaded yet."
+            ),
+        )
+    return response
 
 
 async def evaluate_node(state: AgentState) -> dict:
@@ -160,7 +211,7 @@ async def evaluate_node(state: AgentState) -> dict:
         system_prompt = f"{EVALUATE_SYSTEM_PROMPT}\n\n{BUDGET_EXHAUSTED_PROMPT}"
         try:
             response = await invoke_structured(
-                system_prompt, user_prompt, EvaluateResponse
+                system_prompt, user_prompt, EvaluateResponse, state.get("llm_config")
             )
         except StructuredOutputError as exc:
             logger.error("> evaluate | final verdict unusable, falling back: %s", exc)
@@ -191,7 +242,7 @@ async def evaluate_node(state: AgentState) -> dict:
 
     try:
         response = await invoke_structured(
-            EVALUATE_SYSTEM_PROMPT, user_prompt, EvaluateResponse
+            EVALUATE_SYSTEM_PROMPT, user_prompt, EvaluateResponse, state.get("llm_config")
         )
     except StructuredOutputError as exc:
         logger.error("> evaluate | no usable response, falling back: %s", exc)
@@ -207,6 +258,7 @@ async def evaluate_node(state: AgentState) -> dict:
                 f"{EVALUATE_SYSTEM_PROMPT}\n\n{CHALLENGE_PROMPT}",
                 user_prompt,
                 EvaluateResponse,
+                state.get("llm_config"),
             )
         except StructuredOutputError as exc:
             logger.warning(
@@ -214,6 +266,8 @@ async def evaluate_node(state: AgentState) -> dict:
             )
         else:
             logger.info("> evaluate | after challenge -> %s", response.action)
+
+    response = _enforce_mandatory_investigation(state, response)
 
     if response.action == "verdict":
         verdict = response.to_verdict(state["investigation_trail"])
