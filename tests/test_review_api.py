@@ -45,7 +45,7 @@ async def test_index_html_served(client):
 async def test_static_assets_served(client):
     response = await client.get("/style.css")
     assert response.status_code == 200
-    assert "EDE0CE" in response.text or "#ede0ce" in response.text.lower()
+    assert "#0d5c5c" in response.text.lower() or "--primary" in response.text
 
 
 @pytest.mark.asyncio
@@ -70,6 +70,24 @@ async def test_review_agent_mode(mock_run_review, client):
     args, kwargs = mock_run_review.await_args
     assert args == ("https://github.com/octo/repo/pull/1", "agent")
     assert kwargs["llm_config"].provider == "groq"
+
+
+@pytest.mark.asyncio
+@patch("backend.main.run_review", new_callable=AsyncMock)
+async def test_review_passes_github_token(mock_run_review, client):
+    mock_run_review.return_value = _sample_verdict()
+
+    response = await client.post(
+        "/api/review",
+        json={
+            "pr_url": "https://github.com/octo/private-repo/pull/1",
+            "github_token": "ghp_test_token",
+        },
+    )
+
+    assert response.status_code == 200
+    _, kwargs = mock_run_review.await_args
+    assert kwargs["github_token"] == "ghp_test_token"
 
 
 @pytest.mark.asyncio
@@ -125,8 +143,8 @@ async def test_review_github_error_returns_502(mock_run_review, client):
         json={"pr_url": "https://github.com/octo/repo/pull/1"},
     )
 
-    assert response.status_code == 502
-    assert response.json()["detail"] == "rate limit exceeded"
+    assert response.status_code == 429
+    assert "GITHUB_TOKEN" in response.json()["detail"]
 
 
 @pytest.mark.asyncio
@@ -161,6 +179,49 @@ async def test_unexpected_error_returns_500(mock_run_review, client):
 
 @pytest.mark.asyncio
 @patch("backend.main.run_review", new_callable=AsyncMock)
+async def test_review_stream_emits_sse_events(mock_run_review, client):
+    verdict = _sample_verdict(summary="Streamed review")
+
+    async def fake_run(_pr_url, _mode, *, emit=None, **kwargs):
+        assert emit is not None
+        await emit({"type": "status", "text": "Starting"})
+        await emit({"type": "budget", "used": 1, "max": 5})
+        await emit({"type": "verdict", "data": verdict.model_dump(mode="json")})
+        return verdict
+
+    mock_run_review.side_effect = fake_run
+
+    response = await client.post(
+        "/api/review/stream",
+        json={"pr_url": "https://github.com/octo/repo/pull/1", "mode": "agent"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    body = response.text
+    assert '"type": "status"' in body or '"type":"status"' in body
+    assert '"type": "verdict"' in body or '"type":"verdict"' in body
+    assert '"type": "done"' in body or '"type":"done"' in body
+    assert "Streamed review" in body
+
+
+@pytest.mark.asyncio
+@patch("backend.main.run_review", new_callable=AsyncMock)
+async def test_review_stream_error_event(mock_run_review, client):
+    mock_run_review.side_effect = ValueError("Invalid GitHub PR URL")
+
+    response = await client.post(
+        "/api/review/stream",
+        json={"pr_url": "not-a-url", "mode": "agent"},
+    )
+
+    assert response.status_code == 200
+    assert '"type": "error"' in response.text or '"type":"error"' in response.text
+    assert "Invalid GitHub PR URL" in response.text
+
+
+@pytest.mark.asyncio
+@patch("backend.main.run_review", new_callable=AsyncMock)
 async def test_review_agent_failure_returns_500(mock_run_review, client):
     mock_run_review.side_effect = RuntimeError("Agent finished without producing a verdict")
 
@@ -171,3 +232,26 @@ async def test_review_agent_failure_returns_500(mock_run_review, client):
 
     assert response.status_code == 500
     assert "verdict" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+@patch("backend.main.build_chat_model")
+@patch("backend.main.resolve_llm_config")
+async def test_configure_llm_test_ok(mock_resolve, mock_build, client):
+    from backend.agent.providers import LLMConfig
+    from pydantic import SecretStr
+
+    mock_resolve.return_value = LLMConfig(
+        provider="groq", model="llama-3.3-70b-versatile", api_key=SecretStr("test-key")
+    )
+    mock_llm = AsyncMock()
+    mock_build.return_value = mock_llm
+
+    response = await client.post(
+        "/api/configure-llm/test",
+        json={"provider": "groq", "model": "llama-3.3-70b-versatile", "api_key": "test-key"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    mock_llm.ainvoke.assert_awaited_once()

@@ -3,9 +3,12 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from backend.agent.actions import EvaluateResponse
+from backend.agent.llm import StructuredOutputError
 from backend.agent.graph import build_review_graph, route_after_evaluate, run_agent_review
 from backend.agent.nodes import (
     _pick_investigation_target,
+    _reject_bad_fetch_request,
+    _unfetchable_path_reason,
     changed_line_count,
     evaluate_node,
     fetch_file_node,
@@ -13,7 +16,7 @@ from backend.agent.nodes import (
 from backend.agent.state import AgentState
 from backend.github.client import GitHubAPIError, GitHubClient
 from backend.github.models import FileDiff, PRMetadata
-from backend.models.review import InvestigationStep, ReviewIssue, ReviewVerdict
+from backend.models.review import InvestigationStep, ReviewIssue, ReviewInsights, ReviewVerdict
 
 
 def _metadata() -> PRMetadata:
@@ -50,6 +53,7 @@ def _initial_state(**overrides) -> AgentState:
         "pending_reason": None,
         "verdict": None,
         "feedback_note": None,
+        "redundant_request_count": 0,
     }
     state.update(overrides)
     return state
@@ -75,6 +79,29 @@ class TestRouteAfterEvaluate:
             pending_reason="need foo impl",
         )
         assert route_after_evaluate(state) == "evaluate"
+
+
+@pytest.mark.asyncio
+async def test_evaluate_verdict_carries_insights():
+    state = _initial_state()
+    mock_response = EvaluateResponse(
+        action="verdict",
+        summary="Solid change with one concern",
+        confidence="high",
+        insights=ReviewInsights(
+            whats_good=["Focused scope", "Tests updated"],
+            risks=["Edge case on empty input"],
+            improvements=["Consider extracting helper"],
+        ),
+    )
+    with patch(
+        "backend.agent.nodes.invoke_structured",
+        new=AsyncMock(return_value=mock_response),
+    ):
+        result = await evaluate_node(state)
+
+    assert result["verdict"].insights.whats_good == ["Focused scope", "Tests updated"]
+    assert result["verdict"].insights.risks == ["Edge case on empty input"]
 
 
 @pytest.mark.asyncio
@@ -417,6 +444,57 @@ async def test_known_missing_path_is_not_refetched():
 
 
 @pytest.mark.asyncio
+async def test_repeated_dead_end_requests_force_a_verdict():
+    """Alternating requests for two known-missing paths must not loop forever."""
+    state = _initial_state(
+        unavailable_files={"missing_a.py": "Not Found", "missing_b.py": "Not Found"}
+    )
+    ask_a = EvaluateResponse(
+        action="investigate", file_path="missing_a.py", reason="try a"
+    )
+    ask_b = EvaluateResponse(
+        action="investigate", file_path="missing_b.py", reason="try b"
+    )
+    salvaged = EvaluateResponse(
+        action="verdict", summary="Judged from the diff alone", confidence="low"
+    )
+    mock = AsyncMock(side_effect=[ask_a, ask_b, ask_a, salvaged])
+
+    with patch("backend.agent.nodes.invoke_structured", new=mock):
+        for _ in range(3):
+            result = await evaluate_node(state)
+            state.update(result)
+
+    assert state["verdict"] is not None
+    assert state["verdict"].partial_investigation is True
+    assert state["investigation_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_graph_terminates_when_model_only_asks_for_missing_files():
+    dead_end = EvaluateResponse(
+        action="investigate", file_path="ghost.java", reason="need it"
+    )
+    client = GitHubClient(token="test")
+    with (
+        patch(
+            "backend.agent.nodes.invoke_structured",
+            new=AsyncMock(return_value=dead_end),
+        ),
+        patch.object(
+            client,
+            "get_file_content",
+            new=AsyncMock(side_effect=GitHubAPIError(404, "Not Found")),
+        ),
+    ):
+        graph = build_review_graph(client)
+        result = await graph.ainvoke(_initial_state(), config={"recursion_limit": 25})
+
+    assert result["verdict"] is not None
+    assert result["verdict"].partial_investigation is True
+
+
+@pytest.mark.asyncio
 async def test_graph_recovers_from_missing_file_and_still_reviews():
     first_guess = EvaluateResponse(
         action="investigate", file_path="java/time/Duration.java", reason="verify parse()"
@@ -511,3 +589,76 @@ def test_pick_investigation_target_prefers_non_test_file():
         FileDiff(filename="core/src/main/Foo.java", status="modified", changes=20),
     ]
     assert _pick_investigation_target(diffs) == "core/src/main/Foo.java"
+
+
+class TestFetchPathValidation:
+    def test_rejects_glob_patterns(self):
+        assert _unfetchable_path_reason("test-results/TEST-*.xml") is not None
+
+    def test_rejects_build_artifacts(self):
+        assert _unfetchable_path_reason("test-harness/build/test-results/foo.xml") is not None
+
+    def test_accepts_source_paths(self):
+        assert _unfetchable_path_reason("src/main/Foo.java") is None
+
+    @pytest.mark.asyncio
+    async def test_glob_request_does_not_spend_budget(self):
+        state = _initial_state()
+        glob = EvaluateResponse(
+            action="investigate",
+            file_path="test-harness/build/test-results/TEST-*.xml",
+            reason="check results",
+        )
+        with patch("backend.agent.nodes.invoke_structured", new=AsyncMock(return_value=glob)):
+            result = await evaluate_node(state)
+
+        assert "test-harness/build/test-results/TEST-*.xml" in result["unavailable_files"]
+        assert result["pending_file_request"] is None
+        assert state["investigation_count"] == 0
+        assert "cannot be fetched" in result["feedback_note"]
+
+
+class TestCaseCorrectPath:
+    def test_corrects_full_path_case(self):
+        diffs = [
+            FileDiff(filename="frontend/src/index.ts", status="modified", patch="+"),
+            FileDiff(filename="backend/src/index.ts", status="modified", patch="+"),
+        ]
+        from backend.agent.nodes import _case_correct_path
+
+        assert _case_correct_path("frontend/src/Index.ts", diffs) == "frontend/src/index.ts"
+
+    def test_ambiguous_basename_stays_unresolved(self):
+        diffs = [
+            FileDiff(filename="frontend/src/index.ts", status="modified", patch="+"),
+            FileDiff(filename="backend/src/index.ts", status="modified", patch="+"),
+        ]
+        from backend.agent.nodes import _case_correct_path
+
+        assert _case_correct_path("src/Index.ts", diffs) is None
+
+
+def test_compute_recursion_limit_scales_with_budget():
+    from backend.agent.nodes import compute_recursion_limit
+
+    assert compute_recursion_limit(5) >= 30
+    assert compute_recursion_limit(12) > compute_recursion_limit(5)
+
+
+@pytest.mark.asyncio
+async def test_structured_output_error_salvages_partial_verdict():
+    state = _initial_state()
+    raw = (
+        '{"action":"verdict","summary":"Found auth bug","confidence":"medium",'
+        '"partial_investigation":true,'
+        '"insights":{"risks":["Token refresh may fail on null input"]}}'
+    )
+    with patch(
+        "backend.agent.nodes.invoke_structured",
+        new=AsyncMock(side_effect=StructuredOutputError("bad json", raw_text=raw)),
+    ):
+        result = await evaluate_node(state)
+
+    assert result["verdict"].summary == "Found auth bug"
+    assert result["verdict"].issues
+    assert result["verdict"].partial_investigation is True

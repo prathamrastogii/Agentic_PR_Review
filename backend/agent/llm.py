@@ -29,6 +29,10 @@ JSON_REPLY_INSTRUCTION = (
 class StructuredOutputError(ValueError):
     """The model could not produce output matching the requested schema."""
 
+    def __init__(self, message: str, *, raw_text: str | None = None):
+        self.raw_text = raw_text
+        super().__init__(message)
+
 
 class LLMRateLimitError(Exception):
     """Upstream LLM quota exhausted (HTTP 429 or vendor-specific equivalent)."""
@@ -97,6 +101,7 @@ async def _invoke_json_mode(
         HumanMessage(content=user_prompt),
     ]
     last_error: Exception | None = None
+    last_raw_text: str | None = None
 
     for attempt in range(MAX_RETRIES + 1):
         try:
@@ -106,6 +111,7 @@ async def _invoke_json_mode(
                 if isinstance(response.content, str)
                 else str(response.content)
             )
+            last_raw_text = content
             logger.debug("JSON mode response (attempt %d): %s", attempt + 1, content[:500])
             result = parse_structured_response(content, model)
             logger.info("  llm ok | attempt=%d schema=%s (json mode)", attempt + 1, model.__name__)
@@ -125,7 +131,8 @@ async def _invoke_json_mode(
             raise
 
     raise StructuredOutputError(
-        f"Failed to parse structured response after retries: {last_error}"
+        f"Failed to parse structured response after retries: {last_error}",
+        raw_text=last_raw_text,
     )
 
 
@@ -143,6 +150,7 @@ async def _invoke_tool_mode(
         HumanMessage(content=user_prompt),
     ]
     last_error: Exception | None = None
+    last_raw_text: str | None = None
 
     for attempt in range(MAX_RETRIES + 1):
         try:
@@ -154,6 +162,7 @@ async def _invoke_tool_mode(
         except Exception as exc:
             rejected_generation = failed_tool_call_payload(exc)
             if rejected_generation is not None:
+                last_raw_text = rejected_generation
                 logger.warning(
                     "  llm attempt %d | Groq rejected the tool call, salvaging payload: %s",
                     attempt + 1,
@@ -178,7 +187,80 @@ async def _invoke_tool_mode(
                 raise
 
     logger.info("  llm fallback | retrying with raw JSON parsing")
-    return await _invoke_json_mode(system_prompt, user_prompt, model, llm_config)
+    try:
+        return await _invoke_json_mode(system_prompt, user_prompt, model, llm_config)
+    except StructuredOutputError as exc:
+        if exc.raw_text is None and last_raw_text is not None:
+            exc.raw_text = last_raw_text
+        raise
+
+
+def salvage_evaluate_response(raw_text: str) -> "EvaluateResponse | None":
+    """Best-effort parse when strict structured output fails."""
+    from backend.agent.actions import EvaluateResponse
+    from backend.models.review import ReviewInsights, ReviewIssue
+
+    try:
+        data = json.loads(extract_json(raw_text))
+    except (ValueError, json.JSONDecodeError):
+        return None
+
+    if not isinstance(data, dict):
+        return None
+
+    try:
+        response = EvaluateResponse.model_validate(data)
+    except ValidationError:
+        response = None
+    else:
+        if response.action == "verdict":
+            return response
+
+    insights_raw = data.get("insights")
+    insights = ReviewInsights()
+    if isinstance(insights_raw, dict):
+        try:
+            insights = ReviewInsights.model_validate(insights_raw)
+        except ValidationError:
+            pass
+
+    issues: list[ReviewIssue] = []
+    issues_raw = data.get("issues")
+    if isinstance(issues_raw, list):
+        for item in issues_raw:
+            if not isinstance(item, dict):
+                continue
+            try:
+                issues.append(ReviewIssue.model_validate(item))
+            except ValidationError:
+                message = item.get("message")
+                if message:
+                    issues.append(
+                        ReviewIssue(
+                            file=str(item.get("file") or "unknown"),
+                            severity="warning",
+                            category="correctness",
+                            message=str(message),
+                        )
+                    )
+
+    has_insights = bool(insights.whats_good or insights.risks or insights.improvements)
+    summary = data.get("summary")
+    if not summary and not issues and not has_insights:
+        return None
+
+    confidence = data.get("confidence")
+    if confidence not in ("high", "medium", "low"):
+        confidence = "low"
+
+    return EvaluateResponse(
+        action="verdict",
+        summary=summary or "Partial review based on incomplete model output.",
+        confidence=confidence,
+        issues=issues,
+        insights=insights,
+        partial_investigation=True,
+    )
 
 
 async def invoke_structured(
