@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from backend.agent.actions import EvaluateResponse
+from backend.agent.llm import StructuredOutputError
 from backend.agent.graph import build_review_graph, route_after_evaluate, run_agent_review
 from backend.agent.nodes import (
     _pick_investigation_target,
@@ -615,3 +616,49 @@ class TestFetchPathValidation:
         assert result["pending_file_request"] is None
         assert state["investigation_count"] == 0
         assert "cannot be fetched" in result["feedback_note"]
+
+
+class TestCaseCorrectPath:
+    def test_corrects_full_path_case(self):
+        diffs = [
+            FileDiff(filename="frontend/src/index.ts", status="modified", patch="+"),
+            FileDiff(filename="backend/src/index.ts", status="modified", patch="+"),
+        ]
+        from backend.agent.nodes import _case_correct_path
+
+        assert _case_correct_path("frontend/src/Index.ts", diffs) == "frontend/src/index.ts"
+
+    def test_ambiguous_basename_stays_unresolved(self):
+        diffs = [
+            FileDiff(filename="frontend/src/index.ts", status="modified", patch="+"),
+            FileDiff(filename="backend/src/index.ts", status="modified", patch="+"),
+        ]
+        from backend.agent.nodes import _case_correct_path
+
+        assert _case_correct_path("src/Index.ts", diffs) is None
+
+
+def test_compute_recursion_limit_scales_with_budget():
+    from backend.agent.nodes import compute_recursion_limit
+
+    assert compute_recursion_limit(5) >= 30
+    assert compute_recursion_limit(12) > compute_recursion_limit(5)
+
+
+@pytest.mark.asyncio
+async def test_structured_output_error_salvages_partial_verdict():
+    state = _initial_state()
+    raw = (
+        '{"action":"verdict","summary":"Found auth bug","confidence":"medium",'
+        '"partial_investigation":true,'
+        '"insights":{"risks":["Token refresh may fail on null input"]}}'
+    )
+    with patch(
+        "backend.agent.nodes.invoke_structured",
+        new=AsyncMock(side_effect=StructuredOutputError("bad json", raw_text=raw)),
+    ):
+        result = await evaluate_node(state)
+
+    assert result["verdict"].summary == "Found auth bug"
+    assert result["verdict"].issues
+    assert result["verdict"].partial_investigation is True

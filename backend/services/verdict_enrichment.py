@@ -123,6 +123,9 @@ def compute_confidence_score(
     else:
         level = "low"
 
+    if verdict.partial_investigation and level == "high":
+        level = "medium"
+
     rationale = _confidence_rationale(metadata, aim, verdict, score)
     return score, rationale, level
 

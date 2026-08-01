@@ -8,6 +8,7 @@ from backend.agent.llm import (
     StructuredOutputError,
     failed_tool_call_payload,
     invoke_structured,
+    salvage_evaluate_response,
 )
 from backend.agent.providers import LLMConfig
 from backend.models.review import ReviewVerdict
@@ -193,3 +194,15 @@ async def test_rate_limit_raises_llm_rate_limit_error():
     assert raised.value.provider == "groq"
 
     assert structured_llm.ainvoke.await_count == 1
+
+
+def test_salvage_evaluate_response_extracts_insights_without_issues():
+    raw = (
+        '{"action":"verdict","summary":"Risky change","confidence":"low",'
+        '"issues":[],"insights":{"risks":["Possible null deref in auth handler"]}}'
+    )
+    response = salvage_evaluate_response(raw)
+
+    assert response is not None
+    assert response.summary == "Risky change"
+    assert response.insights.risks == ["Possible null deref in auth handler"]

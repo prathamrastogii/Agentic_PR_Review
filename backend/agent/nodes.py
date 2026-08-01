@@ -2,7 +2,11 @@ import logging
 
 from backend.agent.baseline import format_diffs
 from backend.agent.actions import EvaluateResponse
-from backend.agent.llm import StructuredOutputError, invoke_structured
+from backend.agent.llm import (
+    StructuredOutputError,
+    invoke_structured,
+    salvage_evaluate_response,
+)
 from backend.agent.prompts import (
     BUDGET_EXHAUSTED_PROMPT,
     CHALLENGE_PROMPT,
@@ -14,6 +18,7 @@ from backend.github.client import GitHubAPIError, GitHubClient
 from backend.github.models import FileDiff
 from backend.models.review import InvestigationStep, ReviewVerdict
 from backend.services.review_events import emit_budget, emit_review_event
+from backend.services.verdict_enrichment import sync_insights_to_issues
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +38,12 @@ RECOVERABLE_FETCH_STATUSES = frozenset({400, 404, 422})
 # Re-requesting an already-seen path costs no budget, so it needs its own cap or
 # the evaluate -> evaluate edge can spin forever.
 MAX_REDUNDANT_REQUESTS = 2
+
+
+def compute_recursion_limit(max_investigations: int) -> int:
+    """LangGraph step budget: each investigation is fetch + evaluate, plus feedback loops."""
+    overhead = 6 + MAX_REDUNDANT_REQUESTS * 4
+    return max(30, (2 * max_investigations) + overhead)
 
 
 def _format_fetched_files(fetched_files: dict[str, str]) -> str:
@@ -113,16 +124,38 @@ def _unfetchable_path_reason(path: str) -> str | None:
     return None
 
 
+def _normalize_repo_path(path: str) -> str:
+    return path.replace("\\", "/").strip("/")
+
+
 def _case_correct_path(path: str, diffs: list[FileDiff]) -> str | None:
-    """If the basename matches a changed file ignoring case, return the real path."""
-    basename = path.replace("\\", "/").rsplit("/", 1)[-1].lower()
-    matches = [
-        diff.filename
-        for diff in diffs
-        if diff.filename.rsplit("/", 1)[-1].lower() == basename
+    """If the path matches a changed file ignoring case, return the real path."""
+    normalized = _normalize_repo_path(path).lower()
+    candidates = [diff.filename for diff in diffs if diff.status != "removed"]
+    if not candidates:
+        return None
+
+    for filename in candidates:
+        if filename.lower() == normalized:
+            return filename
+
+    request_parts = normalized.split("/")
+    suffix_matches = [
+        filename
+        for filename in candidates
+        if filename.lower().split("/")[-len(request_parts) :] == request_parts
     ]
-    if len(matches) == 1:
-        return matches[0]
+    if len(suffix_matches) == 1:
+        return suffix_matches[0]
+
+    basename = request_parts[-1]
+    basename_matches = [
+        filename
+        for filename in candidates
+        if filename.rsplit("/", 1)[-1].lower() == basename
+    ]
+    if len(basename_matches) == 1:
+        return basename_matches[0]
     return None
 
 
@@ -195,6 +228,46 @@ def build_evaluate_prompt(state: AgentState) -> str:
     )
 
 
+def _recover_from_structured_error(state: AgentState, exc: StructuredOutputError) -> dict | None:
+    """Salvage a partial verdict from raw model output when strict parsing fails."""
+    if not exc.raw_text:
+        return None
+
+    response = salvage_evaluate_response(exc.raw_text)
+    if response is None:
+        return None
+
+    if response.action != "verdict":
+        response = EvaluateResponse(
+            action="verdict",
+            summary=(
+                response.summary
+                or response.reason
+                or "Partial review based on incomplete model output."
+            ),
+            issues=response.issues,
+            confidence=response.confidence or "low",
+            partial_investigation=True,
+            insights=response.insights,
+        )
+
+    verdict = response.to_verdict(state["investigation_trail"])
+    verdict = sync_insights_to_issues(verdict, state["diffs"])
+    verdict.partial_investigation = True
+    if verdict.confidence == "high":
+        verdict.confidence = "medium"
+    logger.warning(
+        "> evaluate | recovered partial verdict from model output | issues=%d",
+        len(verdict.issues),
+    )
+    return {
+        "verdict": verdict,
+        "pending_file_request": None,
+        "pending_reason": None,
+        "feedback_note": None,
+    }
+
+
 def _fallback_verdict(state: AgentState) -> dict:
     """Honest low-confidence verdict for when the model never returns valid output.
 
@@ -231,6 +304,9 @@ async def _forced_final_verdict(state: AgentState, user_prompt: str) -> dict:
         )
     except StructuredOutputError as exc:
         logger.error("> evaluate | final verdict unusable, falling back: %s", exc)
+        recovered = _recover_from_structured_error(state, exc)
+        if recovered is not None:
+            return recovered
         return _fallback_verdict(state)
 
     if response.action != "verdict":
@@ -372,6 +448,9 @@ async def evaluate_node(state: AgentState) -> dict:
         )
     except StructuredOutputError as exc:
         logger.error("> evaluate | no usable response, falling back: %s", exc)
+        recovered = _recover_from_structured_error(state, exc)
+        if recovered is not None:
+            return recovered
         return _fallback_verdict(state)
 
     if _should_challenge(state, response):

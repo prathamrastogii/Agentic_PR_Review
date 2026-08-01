@@ -4,7 +4,7 @@ from typing import Literal
 from langgraph.errors import GraphRecursionError
 from langgraph.graph import END, StateGraph
 
-from backend.agent.nodes import evaluate_node, fetch_file_node
+from backend.agent.nodes import compute_recursion_limit, evaluate_node, fetch_file_node
 from backend.agent.state import AgentState
 from backend.github.client import GitHubClient
 
@@ -83,8 +83,12 @@ async def run_agent_review(
         "Agent loop starting | %d diff(s), max_investigations=%d", len(files), budget
     )
     graph = build_review_graph(github_client)
+    recursion_limit = compute_recursion_limit(budget)
+    logger.info("Agent recursion_limit=%d (max_investigations=%d)", recursion_limit, budget)
     try:
-        result = await graph.ainvoke(initial_state, config={"recursion_limit": 25})
+        result = await graph.ainvoke(
+            initial_state, config={"recursion_limit": recursion_limit}
+        )
     except GraphRecursionError:
         logger.error("Agent loop hit the recursion limit, returning a partial verdict")
         return ReviewVerdict(

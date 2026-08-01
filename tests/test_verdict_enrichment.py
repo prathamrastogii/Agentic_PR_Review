@@ -155,6 +155,55 @@ def test_build_confidence_tips_when_score_below_threshold():
     assert any("investigation" in tip.lower() for tip in tips)
 
 
+def test_enrich_verdict_caps_partial_investigation_at_medium():
+    from backend.models.review import InvestigationStep
+
+    trail = [
+        InvestigationStep(file_path="core/src/main/java/Foo.java", reason="check"),
+        InvestigationStep(file_path="core/src/test/java/FooTest.java", reason="tests"),
+    ]
+    verdict = ReviewVerdict(
+        summary="partial review with findings",
+        confidence="medium",
+        partial_investigation=True,
+        investigation_trail=trail,
+        issues=[
+            ReviewIssue(
+                file="core/src/main/java/Foo.java",
+                severity="warning",
+                category="correctness",
+                message="possible bug",
+            ),
+            ReviewIssue(
+                file="core/src/test/java/FooTest.java",
+                severity="warning",
+                category="correctness",
+                message="missing edge case",
+            ),
+            ReviewIssue(
+                file="core/src/main/java/Foo.java",
+                severity="suggestion",
+                category="style",
+                message="cleanup",
+            ),
+        ],
+    )
+    enriched = enrich_verdict(
+        _metadata(
+            body=(
+                "This PR converts failedWorkflow input to a Map so nested references resolve. "
+                * 3
+            )
+        ),
+        verdict,
+        _files(),
+    )
+
+    assert enriched.confidence != "high"
+    assert enriched.confidence_score is not None
+    assert enriched.confidence_score < 72
+
+
 def test_enrich_verdict_includes_tips_when_score_low():
     verdict = ReviewVerdict(summary="ok", confidence="low")
     enriched = enrich_verdict(_metadata(body=None), verdict, _files())
