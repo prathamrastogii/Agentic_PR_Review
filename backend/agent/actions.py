@@ -3,6 +3,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, model_validator
 
 from backend.models.review import (
+    ReviewInsights,
     ReviewIssue,
     ReviewVerdict,
     coerce_bool,
@@ -20,6 +21,7 @@ class EvaluateResponse(BaseModel):
     issues: list[ReviewIssue] = Field(default_factory=list)
     confidence: Literal["high", "medium", "low"] | None = None
     partial_investigation: bool = False
+    insights: ReviewInsights = Field(default_factory=ReviewInsights)
 
     @model_validator(mode="before")
     @classmethod
@@ -53,4 +55,5 @@ class EvaluateResponse(BaseModel):
             confidence=self.confidence or "low",
             partial_investigation=self.partial_investigation,
             investigation_trail=list(trail),
+            insights=self.insights,
         )

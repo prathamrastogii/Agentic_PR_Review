@@ -4,6 +4,16 @@ from pydantic import BaseModel, Field, model_validator
 
 NULL_STRINGS = {"null", "none", "nil", ""}
 TRUE_STRINGS = {"true", "yes", "1"}
+SEVERITY_ALIASES = {
+    "high": "error",
+    "critical": "error",
+    "major": "error",
+    "medium": "warning",
+    "moderate": "warning",
+    "low": "suggestion",
+    "minor": "suggestion",
+    "info": "suggestion",
+}
 
 
 def coerce_bool(value: Any) -> Any:
@@ -36,9 +46,13 @@ class ReviewIssue(BaseModel):
     def normalize_model_output(cls, data: Any) -> Any:
         if not isinstance(data, dict):
             return data
-        if "line" in data:
-            return {**data, "line": coerce_null(data["line"])}
-        return data
+        normalized = dict(data)
+        if "line" in normalized:
+            normalized["line"] = coerce_null(normalized["line"])
+        if isinstance(normalized.get("severity"), str):
+            severity = normalized["severity"].strip().lower()
+            normalized["severity"] = SEVERITY_ALIASES.get(severity, severity)
+        return normalized
 
 
 class InvestigationStep(BaseModel):
@@ -46,12 +60,24 @@ class InvestigationStep(BaseModel):
     reason: str
 
 
+class ReviewInsights(BaseModel):
+    """Executive summary buckets — plain language, distinct from file-level issues."""
+
+    whats_good: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    improvements: list[str] = Field(default_factory=list)
+
+
 class ReviewVerdict(BaseModel):
     summary: str
     issues: list[ReviewIssue] = Field(default_factory=list)
     confidence: Literal["high", "medium", "low"]
+    confidence_score: int | None = None
+    confidence_rationale: str | None = None
+    confidence_tips: list[str] = Field(default_factory=list)
     partial_investigation: bool = False
     investigation_trail: list[InvestigationStep] = Field(default_factory=list)
+    insights: ReviewInsights = Field(default_factory=ReviewInsights)
 
     @model_validator(mode="before")
     @classmethod

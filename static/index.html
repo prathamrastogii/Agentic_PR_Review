@@ -3,151 +3,218 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="AI-powered pull request review with investigation trail and structured insights." />
     <title>PR review agent</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔍</text></svg>" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
     <div class="app">
       <header class="title-bar">
-        <button type="button" class="title-bar__brand" id="home-link" aria-label="PR review agent home">
-          <svg class="site-icon" width="22" height="22" viewBox="0 0 28 28" aria-hidden="true">
-            <rect x="4" y="3" width="16" height="20" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
-            <path d="M9 9h8M9 13h8M9 17h5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-            <circle cx="20" cy="20" r="5.5" fill="none" stroke="currentColor" stroke-width="1.5"/>
-            <path d="M23.5 23.5L26 26" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        <div class="title-bar__left">
+          <button type="button" class="user-profile" id="user-profile" aria-haspopup="true" aria-expanded="false" aria-label="Account menu">
+            <span class="user-profile__avatar" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                <circle cx="12" cy="8" r="4" stroke="currentColor" stroke-width="1.5"/>
+                <path d="M5 20c0-3.314 3.134-6 7-6s7 2.686 7 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+              </svg>
+            </span>
+            <span class="user-profile__info">
+              <span class="user-profile__label">Reviewer</span>
+              <span id="profile-tier" class="user-profile__tier">Not configured</span>
+            </span>
+          </button>
+          <button type="button" class="title-bar__brand" id="home-link" aria-label="PR review agent home">
+            <svg class="site-icon" width="22" height="22" viewBox="0 0 28 28" aria-hidden="true">
+              <rect x="4" y="3" width="16" height="20" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/>
+              <path d="M9 9h8M9 13h8M9 17h5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+              <circle cx="20" cy="20" r="5.5" fill="none" stroke="currentColor" stroke-width="1.5"/>
+              <path d="M23.5 23.5L26 26" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+            <span class="site-title">PR review agent</span>
+          </button>
+        </div>
+        <nav class="stepper" id="stepper" aria-label="Setup progress">
+          <button type="button" class="stepper__step" data-step="welcome" data-step-index="1">
+            <span class="stepper__marker">1</span>
+            <span class="stepper__label">Setup</span>
+          </button>
+          <span class="stepper__connector" aria-hidden="true"></span>
+          <button type="button" class="stepper__step" data-step="config" data-step-index="2">
+            <span class="stepper__marker">2</span>
+            <span class="stepper__label">Connect</span>
+          </button>
+          <span class="stepper__connector" aria-hidden="true"></span>
+          <button type="button" class="stepper__step" data-step="dashboard" data-step-index="3">
+            <span class="stepper__marker">3</span>
+            <span class="stepper__label">Review</span>
+          </button>
+        </nav>
+        <button type="button" class="theme-toggle" id="theme-toggle" aria-label="Switch to dark mode" title="Toggle theme">
+          <svg class="theme-toggle__icon theme-toggle__icon--light" width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <circle cx="12" cy="12" r="4" stroke="currentColor" stroke-width="1.5"/>
+            <path d="M12 3v2M12 19v2M5.64 5.64l1.41 1.41M16.95 16.95l1.41 1.41M3 12h2M19 12h2M5.64 18.36l1.41-1.41M16.95 7.05l1.41-1.41" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
           </svg>
-          <span class="site-title">PR review agent</span>
+          <svg class="theme-toggle__icon theme-toggle__icon--dark" width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M20 14.5A7.5 7.5 0 0 1 9.5 4 6 6 0 1 0 20 14.5z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+          </svg>
         </button>
-        <span id="title-bar-hint" class="title-bar__hint">Choose how to run reviews</span>
       </header>
 
-      <!-- Phase 1: Welcome -->
+      <div id="profile-menu" class="profile-menu" hidden role="menu">
+        <button type="button" class="profile-menu__item" id="menu-change-llm" role="menuitem">Change LLM setup</button>
+      </div>
+
+      <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+      <!-- Welcome -->
       <section id="view-welcome" class="view view--welcome" data-view="welcome">
-        <div class="welcome">
-          <div class="welcome__intro">
-            <h2 class="welcome__headline">Review pull requests with context</h2>
-            <p class="welcome__tagline">
-              Paste a GitHub PR URL and get a structured review — summary, investigation trail, and flagged issues.
-            </p>
+        <div class="welcome-layout">
+          <div class="welcome">
+            <div class="welcome__intro">
+              <h2 class="welcome__headline">Review pull requests with context</h2>
+              <p class="welcome__tagline">
+                Paste a GitHub PR URL and get a structured review with a summary, investigation trail, and flagged issues.
+              </p>
+            </div>
+
+            <div class="how-it-works">
+              <div class="how-it-works__step">
+                <span class="how-it-works__icon" aria-hidden="true">1</span>
+                <span class="how-it-works__text">Paste a PR URL</span>
+              </div>
+              <div class="how-it-works__step">
+                <span class="how-it-works__icon" aria-hidden="true">2</span>
+                <span class="how-it-works__text">Agent investigates beyond the diff</span>
+              </div>
+              <div class="how-it-works__step">
+                <span class="how-it-works__icon" aria-hidden="true">3</span>
+                <span class="how-it-works__text">Get summary, insights, and issues</span>
+              </div>
+            </div>
+
+            <div class="choice-cards">
+              <button type="button" class="choice-card choice-card--success" id="choose-free-tier">
+                <span class="choice-card__icon" aria-hidden="true">✓</span>
+                <span class="choice-card__badge badge badge--success">Ready to go</span>
+                <span class="choice-card__title">Use free tier</span>
+                <span class="choice-card__desc">Groq-hosted Llama 3.3 70B, no setup needed</span>
+              </button>
+              <button type="button" class="choice-card choice-card--neutral" id="choose-own-llm">
+                <span class="choice-card__icon" aria-hidden="true">⚙</span>
+                <span class="choice-card__title">Use your own LLM</span>
+                <span class="choice-card__desc">Bring your own API key and model</span>
+              </button>
+            </div>
+
+            <table class="tier-compare" aria-label="Tier comparison">
+              <thead>
+                <tr><th></th><th>Free tier</th><th>Your own LLM</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>Setup</td><td>None</td><td>API key + model</td></tr>
+                <tr><td>Depth</td><td>Good</td><td>Often better on subtle bugs</td></tr>
+                <tr><td>Cost</td><td>Free</td><td>Your provider billing</td></tr>
+              </tbody>
+            </table>
           </div>
 
-          <div class="choice-cards">
-            <button type="button" class="choice-card choice-card--success" id="choose-free-tier">
-              <span class="choice-card__icon" aria-hidden="true">
-                <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-                  <circle cx="14" cy="14" r="10" stroke="currentColor" stroke-width="1.5"/>
-                  <path d="M9 14l3.5 3.5L19 10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
-              </span>
-              <span class="choice-card__badge badge badge--success">Ready to go</span>
-              <span class="choice-card__title">Use free tier</span>
-              <span class="choice-card__desc">Groq-hosted Llama 3.3 70B, no setup needed</span>
-            </button>
-
-            <button type="button" class="choice-card choice-card--neutral" id="choose-own-llm">
-              <span class="choice-card__icon" aria-hidden="true">
-                <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-                  <rect x="6" y="4" width="16" height="20" rx="2" stroke="currentColor" stroke-width="1.5"/>
-                  <path d="M10 10h8M10 14h5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-                  <circle cx="19" cy="19" r="4" stroke="currentColor" stroke-width="1.5"/>
-                </svg>
-              </span>
-              <span class="choice-card__title">Use your own LLM</span>
-              <span class="choice-card__desc">Bring your own API key and model</span>
-            </button>
-          </div>
+          <aside class="product-preview" aria-label="Example review output">
+            <p class="product-preview__label">What you'll get</p>
+            <div class="product-preview__mock">
+              <p class="product-preview__title">PR #42 (Refactor auth module)</p>
+              <div class="product-preview__metrics">
+                <span class="product-preview__chip product-preview__chip--confidence">High</span>
+                <span class="product-preview__chip">3 issues</span>
+                <span class="product-preview__chip">5 files read</span>
+              </div>
+              <div class="product-preview__card product-preview__card--good">
+                <strong>Positive</strong>
+                <p>Cleaner separation of token validation logic.</p>
+              </div>
+              <div class="product-preview__issue">
+                <span class="severity-dot severity-dot--warning"></span>
+                <span><code>auth/handler.py:84</code> — Missing null check on refresh token</span>
+              </div>
+            </div>
+          </aside>
         </div>
       </section>
 
-      <!-- Phase 2: Own-LLM config -->
+      <!-- Config -->
       <section id="view-config" class="view view--config" data-view="config" hidden>
         <div class="config-screen">
           <div class="config-screen__header">
             <a href="#" class="text-link" id="config-back">← Back</a>
             <h2 class="config-screen__title">Configure your LLM</h2>
-            <p class="config-screen__subtitle">
-              Connect a provider you control. Keys stay in this session only — nothing is saved to the server.
-            </p>
+            <p class="config-screen__subtitle">Connect a provider you control. Keys stay in this session only.</p>
           </div>
 
           <form id="config-form" class="config-form card">
-            <label class="field-label" for="config-provider">Provider</label>
-            <select id="config-provider" class="text-input" required>
-              <option value="">Select a provider…</option>
-              <option value="openai" data-default-model="gpt-4o">OpenAI</option>
-              <option value="anthropic" data-default-model="claude-sonnet-4-20250514">Anthropic</option>
-              <option value="groq" data-default-model="llama-3.3-70b-versatile">Groq</option>
-              <option value="google" data-default-model="gemini-2.0-flash">Google Gemini</option>
-              <option value="custom" data-default-model="">Custom endpoint</option>
-            </select>
+            <p class="config-value-prop">Stronger models often catch subtler correctness issues during file investigations.</p>
 
-            <label class="field-label" for="config-model">Model</label>
-            <input
-              id="config-model"
-              type="text"
-              class="text-input"
-              placeholder="e.g. gpt-4o"
-              required
-              autocomplete="off"
-            />
+            <fieldset class="vendor-fieldset">
+              <legend class="field-label">Vendor</legend>
+              <div id="vendor-picker" class="vendor-picker" role="radiogroup" aria-label="LLM vendor"></div>
+            </fieldset>
 
-            <label class="field-label" for="config-api-key">API key</label>
-            <input
-              id="config-api-key"
-              type="password"
-              class="text-input"
-              placeholder="sk-…"
-              required
-              autocomplete="off"
-            />
-
-            <div id="base-url-field" class="base-url-field" hidden>
-              <label class="field-label" for="config-base-url">Base URL override</label>
-              <input
-                id="config-base-url"
-                type="url"
-                class="text-input"
-                placeholder="https://your-host/v1"
-                autocomplete="off"
-              />
-              <p class="field-hint">For self-hosted or OpenAI-compatible endpoints.</p>
+            <div id="model-select-wrap" hidden>
+              <label class="field-label" for="config-model">Model</label>
+              <select id="config-model" class="text-input">
+                <option value="">Select a model…</option>
+              </select>
             </div>
 
-            <div class="config-actions">
-              <button type="button" class="secondary-button" id="test-connection-btn">Test connection</button>
-              <div id="connection-result" class="connection-result" hidden role="status" aria-live="polite"></div>
+            <div id="model-custom-wrap" hidden>
+              <label class="field-label" for="config-model-custom">Model name</label>
+              <input id="config-model-custom" type="text" class="text-input" placeholder="e.g. my-org/custom-model" autocomplete="off" />
             </div>
 
-            <button type="submit" class="primary-button" id="config-continue" disabled>
-              Continue to review
-            </button>
+            <div id="credentials-wrap" hidden>
+              <label class="field-label" for="config-api-key">API key</label>
+              <div class="input-with-toggle">
+                <input id="config-api-key" type="password" class="text-input" placeholder="Not stored on the server" autocomplete="off" />
+                <button type="button" class="input-toggle-btn" id="toggle-api-key" aria-label="Show API key">Show</button>
+              </div>
+
+              <div id="base-url-field" class="base-url-field" hidden>
+                <label class="field-label" for="config-base-url">Base URL override</label>
+                <input id="config-base-url" type="url" class="text-input" placeholder="https://your-host/v1" autocomplete="off" />
+                <p class="field-hint">For self-hosted or OpenAI-compatible endpoints.</p>
+              </div>
+
+              <div class="config-actions">
+                <button type="button" class="secondary-button" id="test-connection-btn">Test connection</button>
+                <div id="connection-result" class="connection-result" hidden role="status" aria-live="polite"></div>
+              </div>
+            </div>
+
+            <button type="submit" class="primary-button" id="config-continue" disabled>Continue to review</button>
+
+            <p class="config-security">Your API key is kept in this browser tab only and is never written to server logs or storage.</p>
           </form>
         </div>
       </section>
 
-      <!-- Phase 3: Review dashboard -->
+      <!-- Dashboard -->
       <section id="view-dashboard" class="view view--dashboard" data-view="dashboard" hidden>
         <div class="workspace">
           <aside class="sidebar" aria-labelledby="form-heading">
-            <div class="llm-indicator" id="llm-indicator">
-              <span class="llm-indicator__dot" id="llm-indicator-dot" aria-hidden="true"></span>
-              <span class="llm-indicator__text" id="llm-indicator-text"></span>
-              <button type="button" class="text-link text-link--inline" id="change-llm-path">Change</button>
-            </div>
-
             <h2 id="form-heading" class="panel-label">Review controls</h2>
 
             <form id="review-form" class="review-form">
               <label class="field-label" for="pr-url">Pull request URL</label>
-              <input
-                id="pr-url"
-                name="pr_url"
-                type="url"
-                class="text-input"
-                placeholder="https://github.com/owner/repo/pull/123"
-                required
-                autocomplete="off"
-              />
+              <input id="pr-url" name="pr_url" type="url" class="text-input" placeholder="https://github.com/owner/repo/pull/123" required autocomplete="off" />
+
+              <label class="field-label" for="github-token">GitHub token <span class="field-optional">optional — private repos</span></label>
+              <div class="input-with-toggle">
+                <input id="github-token" type="password" class="text-input" placeholder="ghp_… or fine-grained token" autocomplete="off" />
+                <button type="button" class="input-toggle-btn" id="toggle-github-token" aria-label="Show GitHub token">Show</button>
+              </div>
+              <p class="token-disclaimer">Your GitHub token is used only for this review and is not stored, logged, or written to disk by this app.</p>
 
               <fieldset class="mode-fieldset">
                 <legend class="field-label">Review mode</legend>
@@ -165,52 +232,147 @@
                 </div>
               </fieldset>
 
-              <button type="submit" class="primary-button" id="submit-btn">Run review</button>
-              <p class="cold-start-note">
-                First request after idle can take 30–90 seconds while the agent fetches the PR and runs investigations.
-              </p>
+              <button type="submit" class="primary-button" id="submit-btn">
+                <span id="submit-btn-label">Initiate AI Review</span>
+              </button>
+              <p class="cold-start-note">First request after idle can take 30–90 seconds.</p>
+              <p class="keyboard-hint"><kbd>/</kbd> focus URL · <kbd>⌘</kbd><kbd>↵</kbd> run review</p>
             </form>
+
+            <section class="review-history" id="review-history-section" hidden aria-labelledby="history-heading">
+              <h3 id="history-heading" class="panel-label">Recent reviews</h3>
+              <ul id="review-history-list" class="review-history__list"></ul>
+            </section>
+
+            <button type="button" class="text-link sidebar-change-llm" id="change-llm-path">Change LLM setup</button>
           </aside>
 
           <main class="workspace-main">
             <div id="workspace-empty" class="workspace-empty">
               <div class="workspace-empty__inner">
+                <div class="workspace-empty__icon" aria-hidden="true">📋</div>
                 <p class="workspace-empty__title">No review yet</p>
-                <p class="workspace-empty__text">
-                  Paste a GitHub pull request URL in the sidebar and run a review.
-                  Results will appear here — summary, investigation trail, and issues side by side.
-                </p>
+                <p class="workspace-empty__text">Paste a GitHub pull request URL and initiate a review.</p>
               </div>
             </div>
 
             <div id="status" class="status" role="status" aria-live="polite" hidden></div>
 
+            <section id="review-timeline" class="review-timeline" hidden aria-label="Review progress">
+              <ol id="timeline-list" class="timeline-list"></ol>
+            </section>
+
+            <section id="thinking-panel" class="thinking-panel" hidden aria-labelledby="thinking-heading">
+              <div class="thinking-panel__header">
+                <div class="thinking-panel__heading">
+                  <h2 id="thinking-heading" class="section-title">Agent thinking</h2>
+                  <p class="thinking-panel__subtitle">Live narration while the agent works</p>
+                  <p id="thinking-collapsed-hint" class="thinking-panel__collapsed-hint" hidden></p>
+                </div>
+                <div class="thinking-panel__actions">
+                  <span id="budget-indicator" class="budget-indicator" hidden></span>
+                  <button type="button" id="thinking-toggle" class="thinking-toggle" hidden aria-expanded="false" aria-controls="thinking-feed">View response</button>
+                </div>
+              </div>
+              <div id="thinking-feed" class="thinking-feed" role="log" aria-live="polite"></div>
+              <div id="stream-lost-banner" class="banner banner-critical" hidden>Connection lost. Showing partial results below.</div>
+            </section>
+
             <section id="results" class="results" hidden>
-              <div id="partial-banner" class="banner banner-warning" hidden>
-                Investigation budget was exhausted before the agent finished. Treat this review as partial.
+              <div id="partial-banner" class="banner banner-warning" hidden>Investigation budget was exhausted before the agent finished.</div>
+
+              <header class="pr-header">
+                <div class="pr-header__main">
+                  <h1 id="pr-title" class="pr-title"></h1>
+                  <div id="pr-meta-chips" class="pr-meta-chips"></div>
+                </div>
+                <a id="pr-github-link" class="text-link pr-github-link" href="#" target="_blank" rel="noopener noreferrer" hidden>Open on GitHub</a>
+              </header>
+
+              <div class="actions-bar" id="actions-bar">
+                <button type="button" class="secondary-button actions-bar__btn" id="copy-summary-btn">Copy summary</button>
+                <button type="button" class="secondary-button actions-bar__btn" id="export-review-btn">Export .md</button>
+                <button type="button" class="secondary-button actions-bar__btn" id="actions-revisit-stream" hidden>View response</button>
+                <button type="button" class="secondary-button actions-bar__btn" id="new-review-btn">New review</button>
               </div>
 
-              <article class="card summary-card">
-                <div class="summary-header">
-                  <h2 class="section-title">Summary</h2>
-                  <span id="confidence-badge" class="verdict-badge"></span>
-                </div>
+              <div class="metrics-row" id="metrics-row">
+                <article class="metric-card metric-card--context" id="metric-context-card" aria-labelledby="metric-context-label">
+                  <h3 id="metric-context-label" class="metric-card__label">PR Context</h3>
+                  <p id="context-repo" class="metric-card__value metric-card__value--sm">—</p>
+                  <p id="context-branches" class="metric-card__caption"></p>
+                  <div id="context-badges" class="context-badges"></div>
+                </article>
+                <article class="metric-card metric-card--confidence" aria-labelledby="metric-confidence-label">
+                  <h3 id="metric-confidence-label" class="metric-card__label">Confidence</h3>
+                  <div class="confidence-chart" id="confidence-chart">
+                    <svg class="confidence-chart__svg" viewBox="0 0 36 36" aria-hidden="true">
+                      <path class="confidence-chart__track" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                      <path id="confidence-chart-fill" class="confidence-chart__fill" stroke-dasharray="0, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                    </svg>
+                    <span id="confidence-value" class="confidence-chart__value">—</span>
+                  </div>
+                  <p id="confidence-caption" class="metric-card__caption"></p>
+                  <ul id="confidence-tips" class="confidence-tips" hidden aria-label="How to improve review confidence"></ul>
+                </article>
+                <article class="metric-card metric-card--progress" aria-labelledby="metric-progress-label">
+                  <h3 id="metric-progress-label" class="metric-card__label">Analysis Progress</h3>
+                  <p id="progress-value" class="metric-card__value">—</p>
+                  <p id="progress-caption" class="metric-card__caption"></p>
+                  <button type="button" id="revisit-stream-btn" class="text-link revisit-stream-btn" hidden>View response</button>
+                </article>
+                <article class="metric-card metric-card--stats" aria-labelledby="metric-stats-label">
+                  <h3 id="metric-stats-label" class="metric-card__label">Stats</h3>
+                  <div id="stats-grid" class="stats-grid"></div>
+                </article>
+              </div>
+
+              <article class="card summary-card results-reveal">
+                <h2 class="section-title">Summary</h2>
                 <p id="summary-text" class="summary-text"></p>
                 <p id="mode-note" class="meta-line"></p>
               </article>
 
-              <div class="results-columns">
-                <section class="card trail-card" aria-labelledby="trail-heading">
+              <section class="card insights-section results-reveal" aria-labelledby="insights-heading">
+                <h2 id="insights-heading" class="section-title">What to do with this PR</h2>
+                <p class="section-intro">Executive summary in plain language. See Issues below for file-level detail.</p>
+                <div class="insights-grid">
+                  <article class="insight-card insight-card--good" aria-labelledby="insight-good-heading">
+                    <h3 id="insight-good-heading" class="insight-card__title"><span class="insight-card__icon" aria-hidden="true">✓</span> Positive Impacts</h3>
+                    <ul id="insight-good-list" class="insight-list"></ul>
+                    <p id="insight-good-more" class="insight-more" hidden></p>
+                  </article>
+                  <article class="insight-card insight-card--risk" aria-labelledby="insight-risk-heading">
+                    <h3 id="insight-risk-heading" class="insight-card__title"><span class="insight-card__icon" aria-hidden="true">!</span> Potential Breaking Changes</h3>
+                    <ul id="insight-risk-list" class="insight-list"></ul>
+                    <p id="insight-risk-more" class="insight-more" hidden></p>
+                  </article>
+                  <article class="insight-card insight-card--improve" aria-labelledby="insight-improve-heading">
+                    <h3 id="insight-improve-heading" class="insight-card__title"><span class="insight-card__icon" aria-hidden="true">💡</span> Improvement Opportunities</h3>
+                    <ul id="insight-improve-list" class="insight-list"></ul>
+                    <p id="insight-improve-more" class="insight-more" hidden></p>
+                  </article>
+                </div>
+              </section>
+
+              <div class="results-columns bento-bottom results-reveal">
+                <section class="card trail-card bento-card--active" aria-labelledby="trail-heading">
                   <h2 id="trail-heading" class="section-title">Investigation trail</h2>
-                  <p id="trail-intro" class="section-intro">
-                    Files opened beyond the diff — proof the agent looked before judging.
-                  </p>
+                  <p id="trail-intro" class="section-intro">Additional files the agent read for context beyond the diff.</p>
                   <ol id="trail-list" class="trail-list"></ol>
                   <p id="trail-empty" class="empty-state" hidden></p>
                 </section>
 
-                <section class="card issues-card" aria-labelledby="issues-heading">
-                  <h2 id="issues-heading" class="section-title">Issues</h2>
+                <section class="card issues-card bento-card--active" id="issues-section" aria-labelledby="issues-heading">
+                  <div class="issues-card__header">
+                    <h2 id="issues-heading" class="section-title">Issues</h2>
+                    <div class="issue-filters" id="issue-filters" role="tablist" aria-label="Filter issues by severity">
+                      <button type="button" class="issue-filter issue-filter--active" data-filter="all" role="tab" aria-selected="true">All</button>
+                      <button type="button" class="issue-filter" data-filter="error" role="tab">High</button>
+                      <button type="button" class="issue-filter" data-filter="warning" role="tab">Medium</button>
+                      <button type="button" class="issue-filter" data-filter="suggestion" role="tab">Low</button>
+                    </div>
+                  </div>
                   <div id="issues-list" class="issues-list"></div>
                   <p id="issues-empty" class="empty-state" hidden>No issues flagged in this review.</p>
                 </section>

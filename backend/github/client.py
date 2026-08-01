@@ -21,6 +21,27 @@ class GitHubAPIError(Exception):
         super().__init__(f"GitHub API error {status_code}: {message}")
 
 
+def github_error_response(exc: GitHubAPIError, *, token_configured: bool) -> tuple[int, str]:
+    """Map GitHub API failures to HTTP status and a user-facing message."""
+    if exc.status_code == 404:
+        return 404, exc.message
+    if exc.status_code == 403 and "rate limit" in exc.message.lower():
+        if not token_configured:
+            return (
+                429,
+                "GitHub API rate limit exceeded. Add a GitHub token in the review form "
+                "or GITHUB_TOKEN to your .env file "
+                "(create a fine-grained or classic token at github.com/settings/tokens; "
+                "no scopes needed for public repos). Unauthenticated access is capped at ~60 requests/hour.",
+            )
+        return (
+            429,
+            "GitHub API rate limit exceeded for the configured token. "
+            "Wait for the hourly reset or switch to another token.",
+        )
+    return 502, exc.message
+
+
 def parse_pr_url(url: str) -> ParsedPRUrl:
     url = url.strip()
     match = PR_URL_PATTERN.search(url)

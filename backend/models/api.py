@@ -19,3 +19,10 @@ class ReviewRequest(BaseModel):
     pr_url: str = Field(..., min_length=1)
     mode: Literal["agent", "baseline"] = "agent"
     llm: LLMSettings | None = None
+    github_token: SecretStr | None = None
+
+
+class LLMTestRequest(BaseModel):
+    provider: str = Field(..., min_length=1)
+    model: str = Field(..., min_length=1)
+    api_key: SecretStr = Field(...)

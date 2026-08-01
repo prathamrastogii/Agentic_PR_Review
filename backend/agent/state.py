@@ -18,3 +18,4 @@ class AgentState(TypedDict):
     pending_reason: str | None
     verdict: ReviewVerdict | None
     feedback_note: str | None
+    redundant_request_count: int

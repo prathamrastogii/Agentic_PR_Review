@@ -1,6 +1,7 @@
 import logging
 from typing import Literal
 
+from langgraph.errors import GraphRecursionError
 from langgraph.graph import END, StateGraph
 
 from backend.agent.nodes import evaluate_node, fetch_file_node
@@ -75,13 +76,27 @@ async def run_agent_review(
         "pending_reason": None,
         "verdict": None,
         "feedback_note": None,
+        "redundant_request_count": 0,
     }
 
     logger.info(
         "Agent loop starting | %d diff(s), max_investigations=%d", len(files), budget
     )
     graph = build_review_graph(github_client)
-    result = await graph.ainvoke(initial_state, config={"recursion_limit": 25})
+    try:
+        result = await graph.ainvoke(initial_state, config={"recursion_limit": 25})
+    except GraphRecursionError:
+        logger.error("Agent loop hit the recursion limit, returning a partial verdict")
+        return ReviewVerdict(
+            summary=(
+                "Review incomplete: the agent kept requesting context without "
+                "converging on a verdict, so the loop was stopped."
+            ),
+            issues=[],
+            confidence="low",
+            partial_investigation=True,
+            investigation_trail=[],
+        )
 
     verdict = result.get("verdict")
     if verdict is None:
