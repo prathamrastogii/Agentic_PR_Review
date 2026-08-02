@@ -10,6 +10,26 @@ export class ReviewStreamError extends Error {
   }
 }
 
+function parseSsePayload(chunk) {
+  const line = chunk
+    .split("\n")
+    .map((part) => part.trim())
+    .find((part) => part.startsWith("data:"));
+  if (!line) return null;
+
+  const raw = line.slice(5).trim();
+  if (!raw) return null;
+
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    throw new ReviewStreamError(
+      `Invalid stream data from server (${err instanceof Error ? err.message : "parse error"}).`,
+      500
+    );
+  }
+}
+
 export async function consumeReviewStream(response, onEvent) {
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
@@ -28,28 +48,41 @@ export async function consumeReviewStream(response, onEvent) {
   let buffer = "";
   let sawDone = false;
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    buffer += decoder.decode(value, { stream: true });
-    const chunks = buffer.split("\n\n");
-    buffer = chunks.pop() || "";
+      buffer += decoder.decode(value, { stream: true });
+      const chunks = buffer.split("\n\n");
+      buffer = chunks.pop() || "";
 
-    for (const chunk of chunks) {
-      const line = chunk
-        .split("\n")
-        .map((part) => part.trim())
-        .find((part) => part.startsWith("data:"));
-      if (!line) continue;
-
-      const payload = JSON.parse(line.slice(5).trim());
-      if (payload.type === "done") {
-        sawDone = true;
-        continue;
+      for (const chunk of chunks) {
+        const payload = parseSsePayload(chunk);
+        if (!payload) continue;
+        if (payload.type === "ping") continue;
+        if (payload.type === "done") {
+          sawDone = true;
+          continue;
+        }
+        onEvent(payload);
       }
-      onEvent(payload);
     }
+
+    const trailing = parseSsePayload(buffer);
+    if (trailing) {
+      if (trailing.type === "done") {
+        sawDone = true;
+      } else if (trailing.type !== "ping") {
+        onEvent(trailing);
+      }
+    }
+  } catch (err) {
+    if (err instanceof ReviewStreamError) throw err;
+    throw new ReviewStreamError(
+      err instanceof Error ? err.message : "Stream read failed.",
+      500
+    );
   }
 
   return sawDone;

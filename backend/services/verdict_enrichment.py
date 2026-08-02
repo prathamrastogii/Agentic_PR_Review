@@ -5,12 +5,137 @@ from __future__ import annotations
 import re
 from typing import Literal
 
+from backend.github.diff_format import diff_prompt_coverage
 from backend.github.models import FileDiff, PRMetadata
 from backend.models.review import ReviewIssue, ReviewVerdict
 
 MODEL_BASE_SCORE = {"high": 62, "medium": 48, "low": 32}
+
+# Review confidence: combined score and level bands
+CONFIDENCE_RICHNESS_WEIGHT = 0.35
+CONFIDENCE_CALIBRATION_WEIGHT = 0.65
+CONFIDENCE_SCORE_FLOOR = 8
+CONFIDENCE_SCORE_CEILING = 96
+CONFIDENCE_LEVEL_HIGH = 72
+CONFIDENCE_LEVEL_MEDIUM = 48
 CONFIDENCE_TIPS_THRESHOLD = 80
+PARTIAL_RUN_HIGH_RICHNESS_CAP = 70
+
+# Review confidence: context richness
+RICHNESS_BASE = 38
+RICHNESS_MIN = 10
+RICHNESS_MAX = 95
+RICHNESS_DESCRIPTION_BONUS = 14
+RICHNESS_NO_DESCRIPTION_MULTI_FILE_PENALTY = 3
+RICHNESS_SINGLE_FILE_BONUS = 28
+RICHNESS_FULL_DIFF_VISIBILITY_BONUS_BASE = 12
+RICHNESS_FULL_DIFF_VISIBILITY_BONUS_CAP = 20
+RICHNESS_FULL_DIFF_VISIBILITY_FILE_DIVISOR = 4
+RICHNESS_PARTIAL_DIFF_VISIBILITY_BONUS = 10
+RICHNESS_LOW_DIFF_VISIBILITY_PENALTY = 8
+RICHNESS_WIDE_PR_LOW_VISIBILITY_PENALTY = 6
+RICHNESS_WIDE_PR_SCOPE_PENALTY = 2
+RICHNESS_LARGE_DIFF_TRUNCATED_PENALTY = 10
+RICHNESS_LARGE_DIFF_MILD_PENALTY = 3
+RICHNESS_TRAIL_BONUS_PER_FILE = 4
+RICHNESS_TRAIL_BONUS_CAP = 14
+RICHNESS_BASELINE_MODE_BONUS = 6
+RICHNESS_PARTIAL_RUN_PENALTY = 16
+RICHNESS_NO_TRAIL_MULTI_FILE_PENALTY = 12
+RICHNESS_SPARSE_TRAIL_PENALTY = 8
+RICHNESS_HIGH_VISIBILITY_SPARSE_TRAIL_PENALTY = 3
+RICHNESS_DIFF_TRUNCATED_PENALTY = 6
+RICHNESS_MISSING_PATCH_PENALTY_PER_FILE = 5
+RICHNESS_MISSING_PATCH_PENALTY_CAP = 10
+LARGE_DIFF_LINE_THRESHOLD = 300
+
+DIFF_VISIBILITY_HIGH = 0.95
+DIFF_VISIBILITY_GOOD = 0.75
+DIFF_VISIBILITY_PARTIAL = 0.85
+DIFF_VISIBILITY_STRONG = 0.9
+
+MULTI_FILE_MIN = 3
+WIDE_PR_MIN_FILES = 6
+LARGE_PR_MIN_FILES = 8
+VERY_LARGE_PR_MIN_FILES = 10
+SPARSE_TRAIL_MAX = 2
+
+# Review confidence: calibration adjustments
+CALIBRATION_MIN = 18
+CALIBRATION_MAX = 95
+CALIBRATION_HIGH_ON_THIN_CONTEXT_PENALTY = 20
+CALIBRATION_HIGH_ON_MULTI_FILE_PENALTY = 10
+CALIBRATION_LOW_ON_RICH_CONTEXT_BONUS = 8
+CALIBRATION_PARTIAL_HIGH_PENALTY = 14
+CALIBRATION_PARTIAL_OTHER_PENALTY = 6
+CALIBRATION_SINGLE_FILE_BLOCKING_BONUS = 14
+CALIBRATION_ISSUES_RICH_CONTEXT_BONUS = 8
+CALIBRATION_ISSUES_MULTI_FILE_BONUS = 6
+CALIBRATION_ISSUES_SINGLE_FILE_BONUS = 8
+CALIBRATION_ISSUES_LOW_CONFIDENCE_BONUS = 4
+CALIBRATION_DIFF_ONLY_HIGH_NO_ISSUES_PENALTY = 12
+CALIBRATION_DIFF_ONLY_HIGH_NO_ISSUES_MILD_PENALTY = 6
+
+RICHNESS_THIN_CONTEXT = 55
+RICHNESS_MULTI_FILE_ISSUE_CONTEXT = 50
+RICHNESS_MODERATE_CONTEXT = 60
+RICHNESS_GOOD_CONTEXT = 68
+RICHNESS_STRONG_CONTEXT = 72
+RICHNESS_SINGLE_FILE_ISSUE_CONTEXT = 52
+CALIBRATION_WIDE_PR_MIN_FILES = 4
+
+# PR readiness: issue penalties and level bands
+READINESS_START = 100
+READINESS_SCORE_FLOOR = 5
+READINESS_SCORE_CEILING = 98
+READINESS_CLEAN_BONUS_CAP = 98
+READINESS_CLEAN_BONUS = 2
+READINESS_LEVEL_HIGH = 75
+READINESS_LEVEL_MEDIUM = 45
 READINESS_TIPS_THRESHOLD = 55
+READINESS_TIPS_LOW_SCORE = 45
+READINESS_ERROR_PENALTY = 28
+READINESS_WARNING_PENALTY = 10
+READINESS_SUGGESTION_PENALTY = 3
+READINESS_UNCOVERED_RISK_PENALTY_PER = 8
+READINESS_UNCOVERED_RISK_PENALTY_CAP = 16
+READINESS_SUSPICIOUS_DIFF_MULTIPLIER = 1.5
+READINESS_SUSPICIOUS_FEATURE_PENALTY = 12
+READINESS_NO_DESCRIPTION_PENALTY = 6
+READINESS_NO_TESTS_MULTI_SRC_PENALTY = 8
+READINESS_MIN_SRC_FILES_FOR_TEST_EXPECTATION = 2
+
+# Suspicious diff heuristics
+SUSPICIOUS_PLACEHOLDER_PENALTY = 12
+SUSPICIOUS_MASS_DELETE_PENALTY = 10
+SUSPICIOUS_HEAVY_DELETE_PENALTY = 8
+SUSPICIOUS_SHRUNK_PATCH_PENALTY = 8
+SUSPICIOUS_MASS_DELETE_MIN_LINES = 30
+SUSPICIOUS_MASS_DELETE_MAX_ADDITIONS = 3
+SUSPICIOUS_HEAVY_DELETE_MIN_LINES = 10
+SUSPICIOUS_HEAVY_DELETE_MAX_ADDITIONS = 1
+SUSPICIOUS_SHRUNK_PATCH_MIN_CHANGES = 40
+SUSPICIOUS_SHRUNK_PATCH_MAX_CHARS = 120
+SUSPICIOUS_DIFF_PENALTY_CAP = 24
+
+# PR aim / intent clarity (0-20)
+AIM_CLARITY_DESCRIPTION_BASE = 12
+AIM_CLARITY_DESCRIPTION_LENGTH_BONUS_CAP = 8
+AIM_CLARITY_DESCRIPTION_CHARS_PER_POINT = 40
+AIM_CLARITY_NO_DESCRIPTION_BASE = 6
+AIM_CLARITY_LONG_TITLE_BONUS = 3
+AIM_CLARITY_LONG_TITLE_MIN_CHARS = 20
+AIM_CLARITY_BRANCH_HINT_BONUS = 4
+AIM_CLARITY_CODE_HINT_BONUS = 4
+AIM_CLARITY_TITLE_BRANCH_OVERLAP_BONUS = 3
+AIM_CLARITY_MAX = 20
+AIM_SUMMARY_MAX_CHARS = 180
+AIM_RATIONALE_MAX_CHARS = 90
+READINESS_AIM_MAX_CHARS = 100
+TITLE_BRANCH_OVERLAP_MIN_TOKEN_LEN = 5
+
+CONFIDENCE_TIPS_MAX = 5
+READINESS_TIPS_MAX = 5
 
 ERROR_KEYWORDS = re.compile(
     r"\b(bug|crash|security|vulnerab|exploit|data loss|incorrect|wrong|break|"
@@ -117,17 +242,23 @@ def compute_confidence_score(
     )
     calibration = _review_calibration_score(verdict, richness, files, mode=mode)
 
-    score = round(richness * 0.35 + calibration * 0.65)
-    score = max(8, min(96, score))
+    score = round(
+        richness * CONFIDENCE_RICHNESS_WEIGHT + calibration * CONFIDENCE_CALIBRATION_WEIGHT
+    )
+    score = max(CONFIDENCE_SCORE_FLOOR, min(CONFIDENCE_SCORE_CEILING, score))
 
-    if score >= 72:
+    if score >= CONFIDENCE_LEVEL_HIGH:
         level: Literal["high", "medium", "low"] = "high"
-    elif score >= 48:
+    elif score >= CONFIDENCE_LEVEL_MEDIUM:
         level = "medium"
     else:
         level = "low"
 
-    if verdict.partial_investigation and level == "high" and richness < 70:
+    if (
+        verdict.partial_investigation
+        and level == "high"
+        and richness < PARTIAL_RUN_HIGH_RICHNESS_CAP
+    ):
         level = "medium"
 
     rationale = _confidence_rationale(
@@ -144,57 +275,121 @@ def _review_context_richness(
     mode: Literal["agent", "baseline"],
 ) -> tuple[int, str]:
     """Estimate how much evidence was available to the reviewer (0-100)."""
-    score = 38.0
+    score = float(RICHNESS_BASE)
     file_count = len(files)
     total_changes = sum(item.changes for item in files)
     trail_len = len(verdict.investigation_trail)
+    truncated, files_in_prompt, _ = diff_prompt_coverage(files)
+    patch_ratio, with_patch, _ = _diff_patch_coverage(files)
+    prompt_ratio = files_in_prompt / file_count if file_count else 1.0
+    diff_visibility = min(patch_ratio, prompt_ratio)
     parts: list[str] = ["PR diff"]
 
     if _has_description(metadata):
-        score += 14
+        score += RICHNESS_DESCRIPTION_BONUS
         parts.append("description")
     elif file_count > 1:
-        score -= 3
+        score -= RICHNESS_NO_DESCRIPTION_MULTI_FILE_PENALTY
 
     if file_count == 1:
-        score += 28
+        score += RICHNESS_SINGLE_FILE_BONUS
         parts.append("single-file change (diff likely complete)")
-    elif file_count == 2 and total_changes < 120:
-        score += 12
-    elif file_count >= 5:
-        score -= 10
-        parts.append(f"{file_count} changed files")
+    elif diff_visibility >= DIFF_VISIBILITY_HIGH:
+        score += min(
+            RICHNESS_FULL_DIFF_VISIBILITY_BONUS_CAP,
+            RICHNESS_FULL_DIFF_VISIBILITY_BONUS_BASE
+            + file_count // RICHNESS_FULL_DIFF_VISIBILITY_FILE_DIVISOR,
+        )
+        parts.append(f"diff visible for {files_in_prompt}/{file_count} changed files")
+    elif diff_visibility >= DIFF_VISIBILITY_GOOD:
+        score += RICHNESS_PARTIAL_DIFF_VISIBILITY_BONUS
+        parts.append(f"diff visible for {files_in_prompt}/{file_count} changed files")
+    else:
+        score -= RICHNESS_LOW_DIFF_VISIBILITY_PENALTY
+        parts.append(
+            f"limited diff visibility ({with_patch} patches, {files_in_prompt} in prompt)"
+        )
 
-    if total_changes > 300:
-        score -= 12
-        parts.append("large diff")
+    if file_count >= VERY_LARGE_PR_MIN_FILES and diff_visibility < DIFF_VISIBILITY_PARTIAL:
+        score -= RICHNESS_WIDE_PR_LOW_VISIBILITY_PENALTY
+    elif file_count >= VERY_LARGE_PR_MIN_FILES:
+        score -= RICHNESS_WIDE_PR_SCOPE_PENALTY
+
+    if total_changes > LARGE_DIFF_LINE_THRESHOLD:
+        if truncated or diff_visibility < DIFF_VISIBILITY_STRONG:
+            score -= RICHNESS_LARGE_DIFF_TRUNCATED_PENALTY
+            parts.append("large diff with truncated or partial visibility")
+        else:
+            score -= RICHNESS_LARGE_DIFF_MILD_PENALTY
+            parts.append("large diff")
 
     if trail_len:
-        score += min(24, trail_len * 8)
-        parts.append(f"{trail_len} supporting file(s)")
+        score += min(RICHNESS_TRAIL_BONUS_CAP, trail_len * RICHNESS_TRAIL_BONUS_PER_FILE)
+        parts.append(f"{trail_len} file(s) read beyond diff")
 
     if mode == "baseline":
-        score += 6
+        score += RICHNESS_BASELINE_MODE_BONUS
         parts.append("baseline mode (diff-only by design)")
 
     if verdict.partial_investigation:
-        score -= 16
+        score -= RICHNESS_PARTIAL_RUN_PENALTY
         parts.append("partial run")
 
-    if mode == "agent" and file_count >= 3 and trail_len == 0:
-        score -= 12
+    if (
+        mode == "agent"
+        and file_count >= MULTI_FILE_MIN
+        and trail_len == 0
+        and diff_visibility < DIFF_VISIBILITY_PARTIAL
+    ):
+        score -= RICHNESS_NO_TRAIL_MULTI_FILE_PENALTY
         parts.append("no files beyond diff on a multi-file PR")
-    elif mode == "agent" and file_count >= 6 and trail_len < 2:
-        score -= 8
+    elif (
+        mode == "agent"
+        and file_count >= WIDE_PR_MIN_FILES
+        and trail_len < SPARSE_TRAIL_MAX
+        and diff_visibility < DIFF_VISIBILITY_PARTIAL
+    ):
+        score -= RICHNESS_SPARSE_TRAIL_PENALTY
+    elif (
+        mode == "agent"
+        and file_count >= LARGE_PR_MIN_FILES
+        and trail_len < SPARSE_TRAIL_MAX
+        and diff_visibility >= DIFF_VISIBILITY_STRONG
+    ):
+        score -= RICHNESS_HIGH_VISIBILITY_SPARSE_TRAIL_PENALTY
 
-    missing_patches = sum(1 for item in files if not item.patch)
+    if truncated:
+        score -= RICHNESS_DIFF_TRUNCATED_PENALTY
+        parts.append("diff truncated at size limit")
+
+    missing_patches = file_count - with_patch
     if missing_patches:
-        score -= min(10, missing_patches * 5)
+        score -= min(
+            RICHNESS_MISSING_PATCH_PENALTY_CAP,
+            missing_patches * RICHNESS_MISSING_PATCH_PENALTY_PER_FILE,
+        )
         parts.append("some file patches unavailable")
 
-    richness = max(10, min(95, round(score)))
+    richness = max(RICHNESS_MIN, min(RICHNESS_MAX, round(score)))
     summary = ", ".join(parts)
     return richness, summary
+
+
+def _diff_patch_coverage(files: list[FileDiff]) -> tuple[float, int, int]:
+    with_patch = sum(1 for item in files if item.patch and item.patch.strip())
+    total = len(files)
+    ratio = with_patch / total if total else 1.0
+    return ratio, with_patch, total
+
+
+def _diff_visibility(files: list[FileDiff]) -> float:
+    truncated, files_in_prompt, file_count = diff_prompt_coverage(files)
+    patch_ratio, _, _ = _diff_patch_coverage(files)
+    prompt_ratio = files_in_prompt / file_count if file_count else 1.0
+    visibility = min(patch_ratio, prompt_ratio)
+    if truncated and file_count:
+        visibility = min(visibility, files_in_prompt / file_count)
+    return visibility
 
 
 def _review_calibration_score(
@@ -207,43 +402,64 @@ def _review_calibration_score(
     """Adjust model-stated confidence to match available evidence."""
     score = float(MODEL_BASE_SCORE.get(verdict.confidence, MODEL_BASE_SCORE["low"]))
     file_count = len(files)
+    diff_visibility = _diff_visibility(files)
 
-    if verdict.confidence == "high" and richness < 55:
-        score -= 20
-    elif verdict.confidence == "high" and richness < 68 and file_count > 1:
-        score -= 10
+    if verdict.confidence == "high" and richness < RICHNESS_THIN_CONTEXT:
+        score -= CALIBRATION_HIGH_ON_THIN_CONTEXT_PENALTY
+    elif (
+        verdict.confidence == "high"
+        and richness < RICHNESS_GOOD_CONTEXT
+        and file_count > 1
+        and diff_visibility < DIFF_VISIBILITY_PARTIAL
+    ):
+        score -= CALIBRATION_HIGH_ON_MULTI_FILE_PENALTY
 
-    if verdict.confidence == "low" and richness >= 72:
-        score += 8
+    if verdict.confidence == "low" and richness >= RICHNESS_STRONG_CONTEXT:
+        score += CALIBRATION_LOW_ON_RICH_CONTEXT_BONUS
 
     if verdict.partial_investigation:
         if verdict.confidence == "high":
-            score -= 14
+            score -= CALIBRATION_PARTIAL_HIGH_PENALTY
         else:
-            score -= 6
+            score -= CALIBRATION_PARTIAL_OTHER_PENALTY
 
     if verdict.issues:
         has_blocking = any(issue.severity == "error" for issue in verdict.issues)
         if file_count == 1 and has_blocking and verdict.confidence == "high":
-            score += 14
-        elif richness >= 60 and verdict.confidence in ("high", "medium"):
-            score += 8
-        elif richness >= 52 and file_count == 1 and verdict.confidence in ("high", "medium"):
-            score += 8
+            score += CALIBRATION_SINGLE_FILE_BLOCKING_BONUS
+        elif richness >= RICHNESS_MODERATE_CONTEXT and verdict.confidence in ("high", "medium"):
+            score += CALIBRATION_ISSUES_RICH_CONTEXT_BONUS
+        elif (
+            richness >= RICHNESS_MULTI_FILE_ISSUE_CONTEXT
+            and file_count > 1
+            and diff_visibility >= DIFF_VISIBILITY_STRONG
+            and verdict.confidence in ("high", "medium")
+        ):
+            score += CALIBRATION_ISSUES_MULTI_FILE_BONUS
+        elif (
+            richness >= RICHNESS_SINGLE_FILE_ISSUE_CONTEXT
+            and file_count == 1
+            and verdict.confidence in ("high", "medium")
+        ):
+            score += CALIBRATION_ISSUES_SINGLE_FILE_BONUS
         elif verdict.confidence == "low":
-            score += 4
+            score += CALIBRATION_ISSUES_LOW_CONFIDENCE_BONUS
 
     trail_len = len(verdict.investigation_trail)
     if (
         mode == "agent"
-        and file_count >= 4
+        and file_count >= CALIBRATION_WIDE_PR_MIN_FILES
         and trail_len == 0
         and verdict.confidence == "high"
         and not verdict.issues
     ):
-        score -= 12
+        score -= (
+            CALIBRATION_DIFF_ONLY_HIGH_NO_ISSUES_PENALTY
+            if diff_visibility < DIFF_VISIBILITY_STRONG
+            else CALIBRATION_DIFF_ONLY_HIGH_NO_ISSUES_MILD_PENALTY
+        )
 
-    return max(18, min(95, score))
+    return max(CALIBRATION_MIN, min(CALIBRATION_MAX, score))
 
 
 def compute_pr_readiness_score(
@@ -253,15 +469,15 @@ def compute_pr_readiness_score(
 ) -> tuple[int, str, Literal["high", "medium", "low"]]:
     """Score how safe the PR looks to merge given findings, aim, and diff shape."""
     aim, _ = infer_pr_aim(metadata, files)
-    score = 100.0
+    score = float(READINESS_START)
 
     errors = sum(1 for issue in verdict.issues if issue.severity == "error")
     warnings = sum(1 for issue in verdict.issues if issue.severity == "warning")
     suggestions = sum(1 for issue in verdict.issues if issue.severity == "suggestion")
 
-    score -= errors * 28
-    score -= warnings * 10
-    score -= suggestions * 3
+    score -= errors * READINESS_ERROR_PENALTY
+    score -= warnings * READINESS_WARNING_PENALTY
+    score -= suggestions * READINESS_SUGGESTION_PENALTY
 
     covered_risk_messages = {
         issue.message.strip().lower()
@@ -273,16 +489,19 @@ def compute_pr_readiness_score(
         for risk in verdict.insights.risks
         if risk.strip().lower() not in covered_risk_messages
     ]
-    score -= min(16, len(extra_risks) * 8)
+    score -= min(
+        READINESS_UNCOVERED_RISK_PENALTY_CAP,
+        len(extra_risks) * READINESS_UNCOVERED_RISK_PENALTY_PER,
+    )
 
     suspicious_penalty = _suspicious_diff_penalty(files)
-    score -= suspicious_penalty * 1.5
+    score -= suspicious_penalty * READINESS_SUSPICIOUS_DIFF_MULTIPLIER
 
     if suspicious_penalty and _looks_like_feature_pr(metadata):
-        score -= 12
+        score -= READINESS_SUSPICIOUS_FEATURE_PENALTY
 
     if not _has_description(metadata):
-        score -= 6
+        score -= READINESS_NO_DESCRIPTION_PENALTY
 
     src_files = [
         item
@@ -290,21 +509,21 @@ def compute_pr_readiness_score(
         if item.status != "removed" and not _is_test_file(item.filename)
     ]
     test_files = [item for item in files if _is_test_file(item.filename)]
-    if len(src_files) >= 2 and not test_files:
-        score -= 8
+    if len(src_files) >= READINESS_MIN_SRC_FILES_FOR_TEST_EXPECTATION and not test_files:
+        score -= READINESS_NO_TESTS_MULTI_SRC_PENALTY
 
     if (
         not verdict.issues
         and not verdict.insights.risks
         and suspicious_penalty == 0
     ):
-        score = min(98, score + 2)
+        score = min(READINESS_CLEAN_BONUS_CAP, score + READINESS_CLEAN_BONUS)
 
-    score = max(5, min(98, round(score)))
+    score = max(READINESS_SCORE_FLOOR, min(READINESS_SCORE_CEILING, round(score)))
 
-    if score >= 75:
+    if score >= READINESS_LEVEL_HIGH:
         level: Literal["high", "medium", "low"] = "high"
-    elif score >= 45:
+    elif score >= READINESS_LEVEL_MEDIUM:
         level = "medium"
     else:
         level = "low"
@@ -348,7 +567,7 @@ def build_pr_readiness_tips(
             "Add a PR description explaining what changed, why, and how you verified it."
         )
 
-    if verdict.insights.improvements and score < 45:
+    if verdict.insights.improvements and score < READINESS_TIPS_LOW_SCORE:
         tips.append(
             "Address improvement items called out in the review, or document why they "
             "can wait until a follow-up PR."
@@ -359,7 +578,7 @@ def build_pr_readiness_tips(
             "Review flagged risks in the summary and issues list before merging."
         )
 
-    return tips[:5]
+    return tips[:READINESS_TIPS_MAX]
 
 
 def build_confidence_tips(
@@ -379,13 +598,25 @@ def build_confidence_tips(
     trail_len = len(verdict.investigation_trail)
     file_count = len(files)
     total_changes = sum(item.changes for item in files)
+    diff_visibility = _diff_visibility(files)
 
-    if mode == "agent" and file_count >= 3 and trail_len == 0:
-        tips.append(
-            "Only the PR diff was available for a multi-file change. Subtle cross-file "
-            "issues may be missing from this review."
-        )
-    elif mode == "agent" and file_count >= 6 and trail_len < 2:
+    if mode == "agent" and file_count >= MULTI_FILE_MIN and trail_len == 0:
+        if diff_visibility < DIFF_VISIBILITY_PARTIAL:
+            tips.append(
+                "Only the PR diff was available for a multi-file change. Subtle cross-file "
+                "issues may be missing from this review."
+            )
+        elif file_count >= LARGE_PR_MIN_FILES:
+            tips.append(
+                "Most changes are visible in the diff, but cross-file interactions outside "
+                "those hunks were not verified."
+            )
+    elif (
+        mode == "agent"
+        and file_count >= WIDE_PR_MIN_FILES
+        and trail_len < SPARSE_TRAIL_MAX
+        and diff_visibility < DIFF_VISIBILITY_PARTIAL
+    ):
         tips.append(
             f"Limited supporting context ({trail_len} file(s) read across {file_count} "
             "changed files). Re-run after fetching key callees if the change is risky."
@@ -403,10 +634,37 @@ def build_confidence_tips(
             "cover what was visible at that point."
         )
 
-    if total_changes > 300 and richness < 60:
+    truncated, _, _ = diff_prompt_coverage(files)
+    if truncated or (
+        total_changes > LARGE_DIFF_LINE_THRESHOLD
+        and diff_visibility < DIFF_VISIBILITY_STRONG
+    ):
+        if mode == "agent":
+            if trail_len == 0:
+                tips.append(
+                    "The diff hit the size limit and the agent did not read any files "
+                    "beyond it. Re-run and let the agent use its investigation budget on "
+                    "key callees, or split this PR."
+                )
+            else:
+                tips.append(
+                    "The diff hit the size limit before all file content could be included. "
+                    f"The agent only read {trail_len} supporting file(s). Split the PR or "
+                    "raise the investigation budget for large cross-file changes."
+                )
+        else:
+            tips.append(
+                "The diff is large relative to the context provided. Consider a smaller PR "
+                "or use agent mode so related files can be read beyond the truncated diff."
+            )
+    elif (
+        total_changes > LARGE_DIFF_LINE_THRESHOLD
+        and richness < RICHNESS_MODERATE_CONTEXT
+        and mode == "baseline"
+    ):
         tips.append(
-            "The diff is large relative to the context provided. Consider a smaller PR or "
-            "re-running with agent mode so related files can be read."
+            "The diff is large relative to the context provided. Use agent mode so related "
+            "files can be read beyond the diff alone."
         )
 
     if sum(1 for item in files if not item.patch) > 0:
@@ -415,10 +673,10 @@ def build_confidence_tips(
             "were not fully visible to the model."
         )
 
-    if verdict.confidence == "high" and richness < 55:
+    if verdict.confidence == "high" and richness < RICHNESS_THIN_CONTEXT:
         tips.append(
-            "The model claimed high confidence despite thin context. Treat non-obvious "
-            "findings cautiously."
+            "The model's raw output claimed high confidence, but available context was "
+            "thin after scoring. Treat non-obvious findings cautiously."
         )
 
     if not tips:
@@ -427,16 +685,21 @@ def build_confidence_tips(
             "that depend on code outside the diff."
         )
 
-    return tips[:5]
+    return tips[:CONFIDENCE_TIPS_MAX]
 
 
 def infer_pr_aim(metadata: PRMetadata, files: list[FileDiff]) -> tuple[str, int]:
     """Return a short aim summary and intent-clarity score (0–20)."""
     if _has_description(metadata):
         body = metadata.body.strip()
-        clarity = 12 + min(8, len(body) // 40)
+        clarity = AIM_CLARITY_DESCRIPTION_BASE + min(
+            AIM_CLARITY_DESCRIPTION_LENGTH_BONUS_CAP,
+            len(body) // AIM_CLARITY_DESCRIPTION_CHARS_PER_POINT,
+        )
         first_line = body.splitlines()[0].strip()
-        aim = first_line[:180] + ("…" if len(first_line) > 180 else "")
+        aim = first_line[:AIM_SUMMARY_MAX_CHARS] + (
+            "…" if len(first_line) > AIM_SUMMARY_MAX_CHARS else ""
+        )
         return aim, clarity
 
     parts: list[str] = [f"Title: {metadata.title.strip()}"]
@@ -447,17 +710,17 @@ def infer_pr_aim(metadata: PRMetadata, files: list[FileDiff]) -> tuple[str, int]
     if code_hint:
         parts.append(code_hint)
 
-    clarity = 6
-    if len(metadata.title.strip()) > 20:
-        clarity += 3
+    clarity = AIM_CLARITY_NO_DESCRIPTION_BASE
+    if len(metadata.title.strip()) > AIM_CLARITY_LONG_TITLE_MIN_CHARS:
+        clarity += AIM_CLARITY_LONG_TITLE_BONUS
     if branch_hint:
-        clarity += 4
+        clarity += AIM_CLARITY_BRANCH_HINT_BONUS
     if code_hint:
-        clarity += 4
+        clarity += AIM_CLARITY_CODE_HINT_BONUS
     if _title_branch_overlap(metadata.title, metadata.head_ref):
-        clarity += 3
+        clarity += AIM_CLARITY_TITLE_BRANCH_OVERLAP_BONUS
 
-    return ". ".join(parts), min(20, clarity)
+    return ". ".join(parts), min(AIM_CLARITY_MAX, clarity)
 
 
 def _has_description(metadata: PRMetadata) -> bool:
@@ -509,7 +772,7 @@ def _title_branch_overlap(title: str, branch: str) -> bool:
         return False
     overlap = title_tokens & branch_tokens
     return len(overlap) >= 2 or (
-        len(overlap) == 1 and len(next(iter(overlap))) >= 5
+        len(overlap) == 1 and len(next(iter(overlap))) >= TITLE_BRANCH_OVERLAP_MIN_TOKEN_LEN
     )
 
 
@@ -534,7 +797,7 @@ def _confidence_rationale(
     return (
         f"{score}% review confidence: trust in this review given available context "
         f"({context_summary}; richness {richness}%, calibration {round(calibration)}%). "
-        f'Aim context: "{aim[:90]}{"…" if len(aim) > 90 else ""}".{partial}'
+        f'Aim context: "{aim[:AIM_RATIONALE_MAX_CHARS]}{"…" if len(aim) > AIM_RATIONALE_MAX_CHARS else ""}".{partial}'
     )
 
 
@@ -563,7 +826,7 @@ def _pr_readiness_rationale(
     detail = ", ".join(parts)
     return (
         f"{score}% PR readiness based on whether the change looks safe to merge "
-        f'for its aim ("{aim[:100]}{"…" if len(aim) > 100 else ""}"): {detail}.'
+        f'for its aim ("{aim[:READINESS_AIM_MAX_CHARS]}{"…" if len(aim) > READINESS_AIM_MAX_CHARS else ""}"): {detail}.'
     )
 
 
@@ -592,17 +855,26 @@ def _suspicious_diff_penalty(files: list[FileDiff]) -> int:
         patch = item.patch or ""
 
         if PLACEHOLDER_PATCH.search(patch):
-            penalty += 12
+            penalty += SUSPICIOUS_PLACEHOLDER_PENALTY
 
-        if deletions >= 30 and additions <= 3:
-            penalty += 10
-        elif deletions >= 10 and additions <= 1:
-            penalty += 8
+        if (
+            deletions >= SUSPICIOUS_MASS_DELETE_MIN_LINES
+            and additions <= SUSPICIOUS_MASS_DELETE_MAX_ADDITIONS
+        ):
+            penalty += SUSPICIOUS_MASS_DELETE_PENALTY
+        elif (
+            deletions >= SUSPICIOUS_HEAVY_DELETE_MIN_LINES
+            and additions <= SUSPICIOUS_HEAVY_DELETE_MAX_ADDITIONS
+        ):
+            penalty += SUSPICIOUS_HEAVY_DELETE_PENALTY
 
-        if changes >= 40 and len(patch.strip()) < 120:
-            penalty += 8
+        if (
+            changes >= SUSPICIOUS_SHRUNK_PATCH_MIN_CHANGES
+            and len(patch.strip()) < SUSPICIOUS_SHRUNK_PATCH_MAX_CHARS
+        ):
+            penalty += SUSPICIOUS_SHRUNK_PATCH_PENALTY
 
-    return min(penalty, 24)
+    return min(penalty, SUSPICIOUS_DIFF_PENALTY_CAP)
 
 
 def _primary_changed_file(files: list[FileDiff]) -> str | None:

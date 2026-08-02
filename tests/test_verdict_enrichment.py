@@ -206,6 +206,45 @@ def test_obvious_single_file_issue_scores_high_review_confidence():
     assert enriched.pr_readiness_score < 45
 
 
+def test_multi_file_complete_diff_scores_reasonable_review_confidence():
+    """When every changed file is visible in the diff, trust should not crater."""
+    metadata = _metadata(body="Adds review confidence scoring across backend and UI.")
+    files = [
+        FileDiff(
+            filename=f"src/module{i}.py",
+            status="modified",
+            patch=f"@@\n+change {i}\n" * 5,
+            changes=20,
+        )
+        for i in range(21)
+    ]
+    from backend.models.review import InvestigationStep
+
+    verdict = ReviewVerdict(
+        summary="Coherent feature PR with scoring split and UI updates.",
+        confidence="high",
+        investigation_trail=[
+            InvestigationStep(
+                file_path="backend/services/verdict_enrichment.py",
+                reason="core scoring logic",
+            )
+        ],
+        issues=[
+            ReviewIssue(
+                file="static/app.js",
+                severity="suggestion",
+                category="style",
+                message="Consider extracting chart helpers.",
+            )
+        ],
+    )
+
+    score, _, level = compute_confidence_score(metadata, verdict, files, mode="agent")
+
+    assert level in ("medium", "high")
+    assert score >= 48
+
+
 def test_multi_file_diff_only_with_high_model_claim_scores_low_review_confidence():
     metadata = _metadata(body=None)
     files = [
@@ -295,3 +334,35 @@ def test_clean_pr_scores_high_readiness():
     assert enriched.pr_readiness_score is not None
     assert enriched.pr_readiness == "high"
     assert enriched.pr_readiness_score >= 75
+
+
+def test_agent_mode_tips_do_not_suggest_switching_to_agent_mode():
+    """Large truncated PRs in agent mode should not tell the user to use agent mode."""
+    files = [
+        FileDiff(
+            filename=f"src/module{i}.py",
+            status="modified",
+            patch="@@\n" + "+line\n" * 400,
+            changes=400,
+        )
+        for i in range(21)
+    ]
+    from backend.models.review import InvestigationStep
+
+    verdict = ReviewVerdict(
+        summary="Large feature PR.",
+        confidence="high",
+        investigation_trail=[
+            InvestigationStep(
+                file_path="backend/services/verdict_enrichment.py",
+                reason="core logic",
+            )
+        ],
+    )
+    tips = build_confidence_tips(_metadata(body=None), verdict, files, 40, mode="agent")
+
+    assert tips
+    joined = " ".join(tips).lower()
+    assert "use agent mode" not in joined
+    assert "re-running with agent mode" not in joined
+    assert "investigation budget" in joined or "supporting file" in joined

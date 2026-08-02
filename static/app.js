@@ -22,7 +22,7 @@ import {
   saveTheme,
 } from "./session.js";
 import { showToast } from "./toast.js";
-import { ReviewStreamError, consumeReviewStream } from "./stream.js";
+import { ReviewStreamError, consumeReviewStream } from "./stream.js?v=3";
 
 const CONFIDENCE_TIPS_THRESHOLD = 80;
 const READINESS_TIPS_THRESHOLD = 55;
@@ -608,23 +608,53 @@ function handleStreamEvent(event) {
   }
 }
 
+function friendlyStreamError(err) {
+  if (err instanceof ReviewStreamError) return err.message;
+  const name = err?.name && err.name !== "Error" ? `${err.name}: ` : "";
+  const msg = err?.message || (err != null ? String(err) : "");
+  const combined = `${name}${msg}`.trim();
+  if (
+    combined === "Failed to fetch" ||
+    combined.includes("Failed to fetch") ||
+    combined.includes("NetworkError") ||
+    combined.includes("Load failed") ||
+    combined.includes("network")
+  ) {
+    return (
+      "Lost connection to the server before the review finished. " +
+      "If you are running locally with auto-reload, wait for the server to settle and try again."
+    );
+  }
+  return combined || "Could not reach the server.";
+}
+
 async function runReviewWithStream(body) {
   let verdict = null;
   let stepCount = 0;
 
-  const response = await fetch("/api/review/stream", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  let response;
+  try {
+    response = await fetch("/api/review/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    throw new ReviewStreamError(friendlyStreamError(err), 0);
+  }
 
   const sawDone = await consumeReviewStream(response, (event) => {
-    if (event.type === "verdict") {
-      verdict = event.data;
-      return;
+    try {
+      if (event.type === "verdict") {
+        verdict = event.data;
+        return;
+      }
+      if (event.type !== "done") stepCount += 1;
+      handleStreamEvent(event);
+    } catch (eventErr) {
+      console.error("Failed to handle stream event", event?.type, eventErr);
+      if (event?.type === "verdict") throw eventErr;
     }
-    if (event.type !== "done") stepCount += 1;
-    handleStreamEvent(event);
   });
 
   return { verdict, sawDone, stepCount };
@@ -1157,16 +1187,30 @@ form.addEventListener("submit", async (event) => {
     }
     if (!result.sawDone) streamLostBanner.hidden = false;
 
-    collapseThinkingPanel(stepCount);
-    renderVerdict(verdict, appState.reviewMode, prUrl);
+    try {
+      collapseThinkingPanel(stepCount);
+      renderVerdict(verdict, appState.reviewMode, prUrl);
+    } catch (renderErr) {
+      console.error("Failed to render review results", renderErr);
+      setStatus(
+        friendlyStreamError(renderErr) || "Review finished but the UI could not display results.",
+        "error"
+      );
+      showToast("Could not display review results", { type: "error" });
+    }
   } catch (err) {
-    const msg = err instanceof ReviewStreamError ? err.message : "Could not reach the server.";
+    console.error("Review stream failed", err);
+    const msg = friendlyStreamError(err);
     setStatus(msg, "error");
     showToast(msg, { type: "error" });
     workspaceEmpty.classList.remove("is-hidden");
     if (verdict) {
-      collapseThinkingPanel(stepCount);
-      renderVerdict(verdict, appState.reviewMode, prUrl);
+      try {
+        collapseThinkingPanel(stepCount);
+        renderVerdict(verdict, appState.reviewMode, prUrl);
+      } catch (renderErr) {
+        console.error("Failed to render partial review results", renderErr);
+      }
     }
   } finally {
     setSubmitLoading(false);

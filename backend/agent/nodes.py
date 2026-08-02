@@ -1,6 +1,6 @@
 import logging
 
-from backend.agent.baseline import format_diffs
+from backend.github.diff_format import format_diffs
 from backend.agent.actions import EvaluateResponse
 from backend.agent.llm import (
     StructuredOutputError,
