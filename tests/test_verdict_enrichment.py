@@ -93,6 +93,16 @@ def test_infer_pr_aim_uses_description_when_present():
     assert clarity >= 10
 
 
+def test_infer_pr_aim_skips_boilerplate_description_heading():
+    metadata = _metadata(
+        body="## Description\n\nEnsure subtasks inherit planned status from parent tasks."
+    )
+    aim, _ = infer_pr_aim(metadata, _files())
+
+    assert aim.startswith("Ensure subtasks")
+    assert "## Description" not in aim
+
+
 def test_infer_pr_aim_falls_back_to_branch_and_code():
     metadata = _metadata(body=None)
     aim, clarity = infer_pr_aim(metadata, _files())

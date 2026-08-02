@@ -1,4 +1,8 @@
-const SEVERITY_LABEL = { error: "High", warning: "Medium", suggestion: "Low" };
+import {
+  CONFIDENCE_TIPS_THRESHOLD,
+  READINESS_TIPS_THRESHOLD,
+  SEVERITY_LABEL,
+} from "./contract.js?v=1";
 
 export function verdictToMarkdown({ verdict, prTitle, prUrl, mode, prMetadata }) {
   const lines = [`# ${prTitle || "PR Review"}`, ""];
@@ -15,7 +19,7 @@ export function verdictToMarkdown({ verdict, prTitle, prUrl, mode, prMetadata })
     if (verdict.pr_readiness_rationale) {
       lines.push(`**PR readiness note:** ${verdict.pr_readiness_rationale}`);
     }
-    if (verdict.pr_readiness_score < 55 && verdict.pr_readiness_tips?.length) {
+    if (verdict.pr_readiness_score < READINESS_TIPS_THRESHOLD && verdict.pr_readiness_tips?.length) {
       lines.push("", "**How to improve PR readiness:**");
       for (const tip of verdict.pr_readiness_tips) lines.push(`- ${tip}`);
     }
@@ -25,7 +29,7 @@ export function verdictToMarkdown({ verdict, prTitle, prUrl, mode, prMetadata })
     if (verdict.confidence_rationale) {
       lines.push(`**Review confidence note:** ${verdict.confidence_rationale}`);
     }
-    if (verdict.confidence_score < 80 && verdict.confidence_tips?.length) {
+    if (verdict.confidence_score < CONFIDENCE_TIPS_THRESHOLD && verdict.confidence_tips?.length) {
       lines.push("", "**Review confidence caveats:**");
       for (const tip of verdict.confidence_tips) lines.push(`- ${tip}`);
     }

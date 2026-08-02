@@ -22,11 +22,22 @@ import {
   saveTheme,
 } from "./session.js";
 import { showToast } from "./toast.js";
-import { ReviewStreamError, consumeReviewStream } from "./stream.js?v=3";
+import { ReviewStreamError, consumeReviewStream } from "./stream.js?v=5";
+import {
+  CONFIDENCE_LEVEL_HIGH,
+  CONFIDENCE_LEVEL_MEDIUM,
+  CONFIDENCE_TIPS_THRESHOLD,
+  ContractError,
+  READINESS_TIPS_THRESHOLD,
+  SEVERITY_LABEL,
+  SEVERITY_ORDER,
+  scoreToLevel,
+  validatePrMetadata,
+  validateStreamEvent,
+  validateVerdict,
+} from "./contract.js?v=1";
 
-const CONFIDENCE_TIPS_THRESHOLD = 80;
-const READINESS_TIPS_THRESHOLD = 55;
-const SEVERITY_LABEL = { error: "High", warning: "Medium", suggestion: "Low" };
+const INSIGHT_VISIBLE_MAX = 4;
 
 const TIMELINE_PHASES = [
   { id: "parse", match: /parsing pull request/i, label: "Parse URL" },
@@ -123,7 +134,6 @@ const newReviewBtn = document.getElementById("new-review-btn");
 const reviewHistorySection = document.getElementById("review-history-section");
 const reviewHistoryList = document.getElementById("review-history-list");
 
-const INSIGHT_VISIBLE_MAX = 4;
 const insightLists = {
   good: document.getElementById("insight-good-list"),
   risk: document.getElementById("insight-risk-list"),
@@ -574,6 +584,7 @@ function updateBudgetIndicator(used, max) {
 }
 
 function handleStreamEvent(event) {
+  validateStreamEvent(event);
   switch (event.type) {
     case "status":
       setTimelinePhase(event.text || "");
@@ -584,7 +595,7 @@ function handleStreamEvent(event) {
       if (/verdict ready/i.test(event.text || "")) setTimelinePhase(event.text);
       break;
     case "pr_metadata":
-      capturedPrMetadata = event.data;
+      capturedPrMetadata = validatePrMetadata(event.data);
       break;
     case "budget":
       updateBudgetIndicator(event.used ?? 0, event.max);
@@ -646,14 +657,14 @@ async function runReviewWithStream(body) {
   const sawDone = await consumeReviewStream(response, (event) => {
     try {
       if (event.type === "verdict") {
-        verdict = event.data;
+        verdict = validateVerdict(event.data);
         return;
       }
       if (event.type !== "done") stepCount += 1;
       handleStreamEvent(event);
     } catch (eventErr) {
       console.error("Failed to handle stream event", event?.type, eventErr);
-      if (event?.type === "verdict") throw eventErr;
+      if (eventErr instanceof ContractError || event?.type === "verdict") throw eventErr;
     }
   });
 
@@ -805,9 +816,12 @@ function renderMetricChart({
 }) {
   const resolvedScore =
     score ??
-    (fallbackLevel === "high" ? 72 : fallbackLevel === "medium" ? 48 : 25);
-  const level =
-    resolvedScore >= 72 ? "high" : resolvedScore >= 48 ? "medium" : "low";
+    (fallbackLevel === "high"
+      ? CONFIDENCE_LEVEL_HIGH
+      : fallbackLevel === "medium"
+        ? CONFIDENCE_LEVEL_MEDIUM
+        : 25);
+  const level = scoreToLevel(resolvedScore, fallbackLevel);
   chartEl.className = `metric-chart ${chartEl.id} metric-chart--${level}`;
   fillEl.setAttribute("stroke-dasharray", `${resolvedScore}, 100`);
   valueEl.textContent = `${resolvedScore}%`;
@@ -929,6 +943,7 @@ function renderProgress(verdict, mode) {
 }
 
 function renderVerdict(verdict, mode, prUrl, { fromHistory = false } = {}) {
+  validateVerdict(verdict);
   currentVerdict = verdict;
   currentPrUrl = prUrl;
   currentReviewMode = mode;
@@ -1200,7 +1215,10 @@ form.addEventListener("submit", async (event) => {
     }
   } catch (err) {
     console.error("Review stream failed", err);
-    const msg = friendlyStreamError(err);
+    const msg =
+      err instanceof ContractError
+        ? `Review data was invalid: ${err.message}`
+        : friendlyStreamError(err);
     setStatus(msg, "error");
     showToast(msg, { type: "error" });
     workspaceEmpty.classList.remove("is-hidden");

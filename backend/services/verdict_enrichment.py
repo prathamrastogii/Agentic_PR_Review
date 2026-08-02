@@ -300,10 +300,12 @@ def _review_context_richness(
             RICHNESS_FULL_DIFF_VISIBILITY_BONUS_BASE
             + file_count // RICHNESS_FULL_DIFF_VISIBILITY_FILE_DIVISOR,
         )
-        parts.append(f"diff visible for {files_in_prompt}/{file_count} changed files")
+        parts.append(f"PR diff includes all {files_in_prompt} changed file(s)")
     elif diff_visibility >= DIFF_VISIBILITY_GOOD:
         score += RICHNESS_PARTIAL_DIFF_VISIBILITY_BONUS
-        parts.append(f"diff visible for {files_in_prompt}/{file_count} changed files")
+        parts.append(
+            f"PR diff includes {files_in_prompt}/{file_count} changed file(s)"
+        )
     else:
         score -= RICHNESS_LOW_DIFF_VISIBILITY_PENALTY
         parts.append(
@@ -325,7 +327,8 @@ def _review_context_richness(
 
     if trail_len:
         score += min(RICHNESS_TRAIL_BONUS_CAP, trail_len * RICHNESS_TRAIL_BONUS_PER_FILE)
-        parts.append(f"{trail_len} file(s) read beyond diff")
+        noun = "file" if trail_len == 1 else "files"
+        parts.append(f"{trail_len} extra {noun} fetched beyond the PR diff")
 
     if mode == "baseline":
         score += RICHNESS_BASELINE_MODE_BONUS
@@ -680,12 +683,38 @@ def build_confidence_tips(
         )
 
     if not tips:
-        tips.append(
-            "Available context was limited for this PR shape. Manually verify findings "
-            "that depend on code outside the diff."
-        )
+        if (
+            diff_visibility >= DIFF_VISIBILITY_HIGH
+            and _has_description(metadata)
+            and file_count <= LARGE_PR_MIN_FILES
+        ):
+            tips.append(
+                "The full PR diff was available and the agent fetched extra context. "
+                "Confidence is moderate because the model's certainty did not fully match "
+                "the evidence. Spot-check findings that depend on runtime behavior."
+            )
+        else:
+            tips.append(
+                "Available context was limited for this PR shape. Manually verify findings "
+                "that depend on code outside the diff."
+            )
 
     return tips[:CONFIDENCE_TIPS_MAX]
+
+
+AIM_BOILERPLATE_HEADING = re.compile(
+    r"^#{1,6}\s*(description|summary|changes|what changed|why|how|testing|test plan)\s*$",
+    re.IGNORECASE,
+)
+
+
+def _first_substantive_body_line(body: str) -> str:
+    for line in body.strip().splitlines():
+        stripped = line.strip()
+        if not stripped or AIM_BOILERPLATE_HEADING.match(stripped):
+            continue
+        return stripped
+    return body.strip().splitlines()[0].strip() if body.strip() else ""
 
 
 def infer_pr_aim(metadata: PRMetadata, files: list[FileDiff]) -> tuple[str, int]:
@@ -696,7 +725,7 @@ def infer_pr_aim(metadata: PRMetadata, files: list[FileDiff]) -> tuple[str, int]
             AIM_CLARITY_DESCRIPTION_LENGTH_BONUS_CAP,
             len(body) // AIM_CLARITY_DESCRIPTION_CHARS_PER_POINT,
         )
-        first_line = body.splitlines()[0].strip()
+        first_line = _first_substantive_body_line(body)
         aim = first_line[:AIM_SUMMARY_MAX_CHARS] + (
             "…" if len(first_line) > AIM_SUMMARY_MAX_CHARS else ""
         )
