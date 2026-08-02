@@ -170,7 +170,7 @@ pytest tests/ -q --deselect tests/test_github_client.py::test_live_public_pr_fet
 
 ## Deployment
 
-The app is deployed on [Render](https://render.com) at [https://agentic-pr-review-l6fx.onrender.com](https://agentic-pr-review-l6fx.onrender.com). See `render.yaml` for the service definition. Set the same environment variables as local `.env` in the Render dashboard (at minimum `GROQ_API_KEY` and/or `GOOGLE_API_KEY`; `GITHUB_TOKEN` recommended).
+The app is deployed on [Render](https://render.com) at [https://agentic-pr-review-l6fx.onrender.com](https://agentic-pr-review-l6fx.onrender.com). Set the same environment variables as local `.env` in the Render dashboard (at minimum `GROQ_API_KEY` and/or `GOOGLE_API_KEY`; `GITHUB_TOKEN` recommended).
 
 ## Roadmap
 
