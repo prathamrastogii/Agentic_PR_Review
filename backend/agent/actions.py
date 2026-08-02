@@ -36,6 +36,10 @@ class EvaluateResponse(BaseModel):
             normalized["partial_investigation"] = coerce_bool(
                 normalized["partial_investigation"]
             )
+        if "issues" in normalized and coerce_null(normalized["issues"]) is None:
+            normalized["issues"] = []
+        if "insights" in normalized and coerce_null(normalized["insights"]) is None:
+            normalized["insights"] = {}
         return normalized
 
     @model_validator(mode="after")

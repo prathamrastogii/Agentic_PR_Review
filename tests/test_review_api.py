@@ -121,16 +121,36 @@ async def test_review_invalid_url_returns_400(mock_run_review, client):
 
 @pytest.mark.asyncio
 @patch("backend.main.run_review", new_callable=AsyncMock)
-async def test_review_pr_not_found_returns_404(mock_run_review, client):
+async def test_review_pr_not_found_without_token(mock_run_review, client):
     mock_run_review.side_effect = GitHubAPIError(404, "Not Found")
 
     response = await client.post(
         "/api/review",
-        json={"pr_url": "https://github.com/octo/repo/pull/999"},
+        json={"pr_url": "https://github.com/octo/private-repo/pull/999"},
     )
 
     assert response.status_code == 404
-    assert response.json()["detail"] == "Not Found"
+    detail = response.json()["detail"]
+    assert "GitHub token" in detail
+    assert "private" in detail.lower()
+
+
+@pytest.mark.asyncio
+@patch("backend.main.run_review", new_callable=AsyncMock)
+async def test_review_pr_not_found_with_token(mock_run_review, client):
+    mock_run_review.side_effect = GitHubAPIError(404, "Not Found")
+
+    response = await client.post(
+        "/api/review",
+        json={
+            "pr_url": "https://github.com/octo/private-repo/pull/999",
+            "github_token": "ghp_test",
+        },
+    )
+
+    assert response.status_code == 404
+    detail = response.json()["detail"]
+    assert "read access" in detail.lower()
 
 
 @pytest.mark.asyncio

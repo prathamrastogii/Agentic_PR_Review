@@ -44,7 +44,7 @@ export function verdictToMarkdown({ verdict, prTitle, prUrl, mode, prMetadata })
   if (verdict.investigation_trail?.length) {
     lines.push("## Investigation trail");
     for (const step of verdict.investigation_trail) {
-      lines.push(`- \`${step.file_path}\` — ${step.reason}`);
+      lines.push(`- \`${step.file_path}\`: ${step.reason}`);
     }
     lines.push("");
   }

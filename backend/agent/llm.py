@@ -94,7 +94,7 @@ async def _invoke_json_mode(
     model: type[T],
     llm_config: LLMConfig,
 ) -> T:
-    """Plain JSON generation — used for Gemini, which mis-names tool calls."""
+    """Plain JSON generation, used for Gemini, which mis-names tool calls."""
     llm = get_llm(llm_config)
     messages = [
         SystemMessage(content=_schema_prompt(system_prompt, model)),
@@ -142,7 +142,7 @@ async def _invoke_tool_mode(
     model: type[T],
     llm_config: LLMConfig,
 ) -> T:
-    """Native structured output via tool binding — reliable on Groq."""
+    """Native structured output via tool binding, reliable on Groq."""
     llm = get_llm(llm_config)
     structured_llm = llm.with_structured_output(model)
     messages = [

@@ -17,6 +17,11 @@ ERROR_KEYWORDS = re.compile(
     re.IGNORECASE,
 )
 
+PLACEHOLDER_PATCH = re.compile(
+    r"\b(total work done|todo|fixme|placeholder|lorem ipsum|wip|coming soon)\b",
+    re.IGNORECASE,
+)
+
 BRANCH_PREFIX_HINTS = (
     ("fix/", "Branch suggests a bug fix"),
     ("fix-", "Branch suggests a bug fix"),
@@ -32,11 +37,13 @@ def enrich_verdict(
     metadata: PRMetadata,
     verdict: ReviewVerdict,
     files: list[FileDiff],
+    *,
+    mode: Literal["agent", "baseline"] = "agent",
 ) -> ReviewVerdict:
     """Normalize issues and attach a contextual confidence score."""
     verdict = sync_insights_to_issues(verdict, files)
-    score, rationale, level = compute_confidence_score(metadata, verdict, files)
-    tips = build_confidence_tips(metadata, verdict, files, score)
+    score, rationale, level = compute_confidence_score(metadata, verdict, files, mode=mode)
+    tips = build_confidence_tips(metadata, verdict, files, score, mode=mode)
     return verdict.model_copy(
         update={
             "confidence_score": score,
@@ -89,30 +96,35 @@ def compute_confidence_score(
     metadata: PRMetadata,
     verdict: ReviewVerdict,
     files: list[FileDiff],
+    *,
+    mode: Literal["agent", "baseline"] = "agent",
 ) -> tuple[int, str, Literal["high", "medium", "low"]]:
-    """Score how well the review aligns with PR intent and investigation depth."""
+    """Score how thoroughly the review investigated the PR, not how good the PR is."""
     aim, aim_clarity = infer_pr_aim(metadata, files)
     score = float(MODEL_BASE_SCORE.get(verdict.confidence, MODEL_BASE_SCORE["low"]))
 
-    score += aim_clarity * 0.9
+    # PR context clarity is a small signal only; a polished title must not inflate review confidence.
+    score += aim_clarity * 0.35
 
     if _has_description(metadata):
-        score += 8
+        score += 4
 
     if _title_branch_overlap(metadata.title, metadata.head_ref):
-        score += 3
+        score += 2
 
     trail_len = len(verdict.investigation_trail)
     if trail_len:
-        score += min(10, trail_len * 2)
-    elif len(files) > 2:
-        score -= 8
+        score += min(12, trail_len * 3)
+    elif mode == "agent":
+        score -= 16
+    else:
+        score -= 6
 
     if verdict.partial_investigation:
         score -= 14
 
-    if verdict.issues:
-        score += min(6, len(verdict.issues) * 2)
+    suspicious_penalty = _suspicious_diff_penalty(files)
+    score -= suspicious_penalty
 
     score = max(8, min(96, round(score)))
     level: Literal["high", "medium", "low"]
@@ -123,10 +135,26 @@ def compute_confidence_score(
     else:
         level = "low"
 
+    if trail_len == 0 and mode == "agent":
+        score = min(score, 58)
+        if suspicious_penalty:
+            score = min(score, 44)
+        if score >= 72:
+            level = "high"
+        elif score >= 48:
+            level = "medium"
+        else:
+            level = "low"
+
     if verdict.partial_investigation and level == "high":
         level = "medium"
 
-    rationale = _confidence_rationale(metadata, aim, verdict, score)
+    if trail_len == 0 and level == "high":
+        level = "medium"
+
+    rationale = _confidence_rationale(
+        metadata, aim, verdict, score, files, mode=mode
+    )
     return score, rationale, level
 
 
@@ -135,12 +163,27 @@ def build_confidence_tips(
     verdict: ReviewVerdict,
     files: list[FileDiff],
     score: int,
+    *,
+    mode: Literal["agent", "baseline"] = "agent",
 ) -> list[str]:
     """Actionable tips when review confidence is below the display threshold."""
     if score >= CONFIDENCE_TIPS_THRESHOLD:
         return []
 
     tips: list[str] = []
+
+    trail_len = len(verdict.investigation_trail)
+    if mode == "agent" and trail_len == 0:
+        tips.append(
+            "This review only used the PR diff. The agent did not open supporting files, "
+            "so confidence in non-obvious findings is limited."
+        )
+
+    if _suspicious_diff_penalty(files):
+        tips.append(
+            "The diff looks destructive or placeholder-like. Treat findings as provisional "
+            "until a human confirms the intended change."
+        )
 
     if not _has_description(metadata):
         tips.append(
@@ -155,7 +198,7 @@ def build_confidence_tips(
 
     trail_len = len(verdict.investigation_trail)
     file_count = len(files)
-    if file_count > 2 and trail_len == 0:
+    if file_count > 2 and trail_len == 0 and mode == "agent":
         tips.append(
             "This PR changes multiple files but no supporting files were investigated. "
             "Use agent mode and let it read callees and related modules."
@@ -287,6 +330,9 @@ def _confidence_rationale(
     aim: str,
     verdict: ReviewVerdict,
     score: int,
+    files: list[FileDiff],
+    *,
+    mode: Literal["agent", "baseline"] = "agent",
 ) -> str:
     if _has_description(metadata):
         source = "the PR description"
@@ -296,15 +342,46 @@ def _confidence_rationale(
     trail_len = len(verdict.investigation_trail)
     if trail_len:
         depth = f"{trail_len} file(s) read beyond the diff"
+    elif mode == "agent":
+        depth = "diff-only context (agent did not investigate supporting files)"
     else:
-        depth = "diff-only context"
+        depth = "diff-only context (baseline mode)"
 
     partial = " Partial investigation." if verdict.partial_investigation else ""
-    return (
-        f"{score}% confidence based on aim inferred from {source} "
-        f'("{aim[:100]}{"…" if len(aim) > 100 else ""}") and review depth ({depth}).'
-        f"{partial}"
+    suspicious = (
+        " Suspicious diff patterns detected."
+        if _suspicious_diff_penalty(files)
+        else ""
     )
+    return (
+        f"{score}% review confidence based on investigation depth ({depth}), "
+        f"with light context from {source} "
+        f'("{aim[:100]}{"…" if len(aim) > 100 else ""}").'
+        f"{partial}{suspicious}"
+    )
+
+
+def _suspicious_diff_penalty(files: list[FileDiff]) -> int:
+    """Penalize diffs that look like placeholders or mass deletions."""
+    penalty = 0
+    for item in files:
+        deletions = item.deletions or 0
+        additions = item.additions or 0
+        changes = item.changes or (deletions + additions)
+        patch = item.patch or ""
+
+        if PLACEHOLDER_PATCH.search(patch):
+            penalty += 12
+
+        if deletions >= 30 and additions <= 3:
+            penalty += 10
+        elif deletions >= 10 and additions <= 1:
+            penalty += 8
+
+        if changes >= 40 and len(patch.strip()) < 120:
+            penalty += 8
+
+    return min(penalty, 24)
 
 
 def _primary_changed_file(files: list[FileDiff]) -> str | None:

@@ -61,7 +61,7 @@ class InvestigationStep(BaseModel):
 
 
 class ReviewInsights(BaseModel):
-    """Executive summary buckets — plain language, distinct from file-level issues."""
+    """Executive summary buckets in plain language, distinct from file-level issues."""
 
     whats_good: list[str] = Field(default_factory=list)
     risks: list[str] = Field(default_factory=list)

@@ -1,4 +1,4 @@
-/** In-memory app state — API keys kept in memory only; labels persisted via session.js */
+/** In-memory app state. API keys kept in memory only; labels persisted via session.js */
 export const appState = {
   /** @type {'free' | 'custom' | null} */
   llmPath: null,

@@ -24,7 +24,7 @@ def format_diffs(files: list[FileDiff]) -> tuple[str, bool]:
                 truncated = True
             block = f"{header}\n```diff\n{patch}\n```"
         else:
-            block = f"{header}\n(no patch — file may be binary or too large)"
+            block = f"{header}\n(no patch; file may be binary or too large)"
 
         if total_chars + len(block) > MAX_TOTAL_DIFF_CHARS:
             parts.append("... [remaining files omitted due to size limit]")

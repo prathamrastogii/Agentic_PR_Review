@@ -24,7 +24,19 @@ class GitHubAPIError(Exception):
 def github_error_response(exc: GitHubAPIError, *, token_configured: bool) -> tuple[int, str]:
     """Map GitHub API failures to HTTP status and a user-facing message."""
     if exc.status_code == 404:
-        return 404, exc.message
+        if not token_configured:
+            return (
+                404,
+                "Could not access this pull request. Private repositories require a "
+                "GitHub token: paste a personal access token in the GitHub token field "
+                "(classic: repo scope; fine-grained: read access to contents and pull requests). "
+                "If the repo is public, double-check the PR URL.",
+            )
+        return (
+            404,
+            "This pull request or repository could not be found. Verify the URL is correct "
+            "and that your GitHub token has read access to this repository.",
+        )
     if exc.status_code == 403 and "rate limit" in exc.message.lower():
         if not token_configured:
             return (

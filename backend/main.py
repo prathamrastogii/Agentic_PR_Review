@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 if not GITHUB_TOKEN:
     logger.warning(
-        "GITHUB_TOKEN is not set — GitHub API calls are unauthenticated (~60 requests/hour). "
+        "GITHUB_TOKEN is not set. GitHub API calls are unauthenticated (~60 requests/hour). "
         "Add GITHUB_TOKEN to .env for 5,000 requests/hour."
     )
 
@@ -111,7 +111,7 @@ async def list_providers():
 
 @app.post("/api/configure-llm/test")
 async def test_llm_connection(request: LLMTestRequest):
-    """Minimal provider ping — validates key and model without storing credentials."""
+    """Minimal provider ping: validates key and model without storing credentials."""
     from langchain_core.messages import HumanMessage
 
     try:

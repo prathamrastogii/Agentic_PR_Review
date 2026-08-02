@@ -543,7 +543,7 @@ function updateThinkingStreamControls() {
   actionsRevisitStream.hidden = !showControls;
 
   if (showControls) {
-    thinkingCollapsedHint.textContent = `${thinkingStepCount} step(s) recorded — expand to read the full response.`;
+    thinkingCollapsedHint.textContent = `${thinkingStepCount} step(s) recorded. Expand to read the full response.`;
     thinkingToggle.textContent = collapsed ? "View response" : "Hide response";
     thinkingToggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
   }
@@ -798,7 +798,7 @@ function renderStats(issues) {
 
 function renderContext(metadata, mode) {
   if (!metadata) {
-    contextRepo.textContent = "—";
+    contextRepo.textContent = "-";
     contextBranches.textContent = "";
     contextBadges.innerHTML = "";
     return;
@@ -935,7 +935,7 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
-// —— Event listeners ——
+// Event listeners
 
 stepper.addEventListener("click", (e) => {
   const btn = e.target.closest(".stepper__step");

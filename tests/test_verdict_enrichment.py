@@ -211,3 +211,52 @@ def test_enrich_verdict_includes_tips_when_score_low():
     assert enriched.confidence_score is not None
     if enriched.confidence_score < CONFIDENCE_TIPS_THRESHOLD:
         assert enriched.confidence_tips
+
+
+def test_fake_placeholder_pr_scores_low_in_agent_mode():
+    """Destructive placeholder PRs must not show high review confidence."""
+    metadata = _metadata(
+        title="updated movies player for live streaming",
+        body=None,
+        head_ref="feat/live-stream",
+    )
+    files = [
+        FileDiff(
+            filename="src/pages/Home.jsx",
+            status="modified",
+            patch=(
+                "@@ -1,120 +1 @@\n"
+                "-import React from 'react';\n"
+                "-// ... entire component removed\n"
+                "+total work done\n"
+            ),
+            additions=1,
+            deletions=120,
+            changes=121,
+        )
+    ]
+    verdict = ReviewVerdict(
+        summary="The Home page was replaced with placeholder text.",
+        confidence="high",
+        issues=[
+            ReviewIssue(
+                file="src/pages/Home.jsx",
+                line=1,
+                severity="error",
+                category="correctness",
+                message="The entire Home page component was deleted and replaced with placeholder text.",
+            )
+        ],
+        insights=ReviewInsights(
+            risks=["Deleting the entire page implementation breaks the application."],
+            improvements=["Restore the Home page component."],
+        ),
+    )
+
+    enriched = enrich_verdict(metadata, verdict, files, mode="agent")
+
+    assert enriched.confidence == "low"
+    assert enriched.confidence_score is not None
+    assert enriched.confidence_score < 48
+    assert any("diff" in tip.lower() for tip in enriched.confidence_tips)
+    assert any("destructive" in tip.lower() or "placeholder" in tip.lower() for tip in enriched.confidence_tips)

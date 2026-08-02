@@ -120,7 +120,7 @@ async def _execute_review(
                 metadata, files, github_client, budget, llm_config
             )
 
-        verdict = enrich_verdict(metadata, verdict, files)
+        verdict = enrich_verdict(metadata, verdict, files, mode=mode)
 
         logger.info(
             "=== Review finished | mode=%s provider=%s issues=%d confidence=%s score=%s partial=%s "
@@ -176,7 +176,7 @@ async def run_review(
             raise
 
         logger.warning(
-            "Provider %s rate-limited mid-review — restarting from scratch with %s/%s",
+            "Provider %s rate-limited mid-review, restarting from scratch with %s/%s",
             exc.provider,
             fallback.provider,
             fallback.model,
