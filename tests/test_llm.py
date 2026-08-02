@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -5,6 +6,7 @@ import pytest
 from backend.agent.actions import EvaluateResponse
 from backend.agent.llm import (
     LLMRateLimitError,
+    LLMTimeoutError,
     StructuredOutputError,
     failed_tool_call_payload,
     invoke_structured,
@@ -252,3 +254,29 @@ def test_salvage_evaluate_response_extracts_insights_without_issues():
     assert response is not None
     assert response.summary == "Risky change"
     assert response.insights.risks == ["Possible null deref in auth handler"]
+
+
+@pytest.mark.asyncio
+async def test_llm_timeout_raises_llm_timeout_error():
+    async def slow_invoke(_messages):
+        import asyncio
+
+        await asyncio.sleep(5)
+        return SimpleNamespace(content="{}")
+
+    llm = SimpleNamespace(ainvoke=AsyncMock(side_effect=slow_invoke))
+
+    with (
+        patch("backend.agent.llm.get_llm", return_value=llm),
+        patch("backend.agent.llm.LLM_TIMEOUT_SECONDS", 0.05),
+    ):
+        with pytest.raises(LLMTimeoutError) as raised:
+            await invoke_structured(
+                "system",
+                "user",
+                EvaluateResponse,
+                LLMConfig(provider="google", model="m", api_key="k"),
+            )
+
+    assert raised.value.provider == "google"
+    assert raised.value.seconds == 0.05

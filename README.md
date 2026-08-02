@@ -13,8 +13,8 @@ The web UI streams the agent loop live (SSE) so you can watch investigations hap
 - **Live thinking feed** — SSE stream of status, thoughts, tool calls, and tool results during a review
 - **Structured output** — summary, file-level issues, investigation trail, and executive insight cards (`whats_good`, `risks`, `improvements`)
 - **Scoring** — contextual review confidence and PR readiness scores with improvement tips when scores are low
-- **Multi-provider LLM** — Groq (default free tier) and Google Gemini on the server; optional BYO key/model from the UI
-- **Provider fallback** — if Groq rate-limits mid-review, the run restarts on Gemini when configured
+- **Multi-provider LLM** — Google Gemini (default free tier) and Groq fallback on the server; optional BYO key/model from the UI
+- **Provider fallback** — if Gemini rate-limits mid-review, the run restarts on Groq when configured
 - **Desktop UI** — welcome → connect LLM → review workspace, dark mode, review history, export to Markdown
 
 ## How it works
@@ -31,7 +31,7 @@ PR URL → GitHub API (metadata + diffs)
 ## Prerequisites
 
 - Python 3.13
-- At least one LLM API key (Groq and/or Google Gemini)
+- At least one LLM API key (**Google Gemini** for free tier, and/or Groq as backup)
 - **GitHub token strongly recommended** — public PRs work without one, but unauthenticated GitHub API access is limited to ~60 requests/hour per IP. Agent reviews use several calls each (metadata, diffs, file fetches).
 
 ## Setup
@@ -119,10 +119,11 @@ python scripts/review.py <pr_url> --max-investigations 8
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `GROQ_API_KEY` | For free tier | Groq API key ([console.groq.com](https://console.groq.com/keys)) |
-| `GOOGLE_API_KEY` | For Gemini / fallback | Google AI key ([aistudio.google.com](https://aistudio.google.com/apikey)) |
-| `LLM_PROVIDER` | Optional | Default provider: `groq` or `google` (default: `groq`) |
-| `LLM_FALLBACK_PROVIDER` | Optional | Fallback when primary is rate-limited (e.g. `google`) |
+| `GOOGLE_API_KEY` | For free tier | Google AI key ([aistudio.google.com](https://aistudio.google.com/apikey)) |
+| `GROQ_API_KEY` | For fallback / BYO | Groq API key ([console.groq.com](https://console.groq.com/keys)) |
+| `LLM_PROVIDER` | Optional | Default provider: `google` or `groq` (default: `google`) |
+| `LLM_FALLBACK_PROVIDER` | Optional | Fallback when primary is rate-limited (default: `groq`) |
+| `LLM_TIMEOUT_SECONDS` | Optional | Per LLM request timeout (default: `180`) |
 | `GROQ_MODEL` | Optional | Default Groq model (default: `llama-3.3-70b-versatile`) |
 | `GOOGLE_MODEL` | Optional | Default Gemini model (default: `gemini-3.5-flash-lite`) |
 | `GOOGLE_THINKING_BUDGET` | Optional | Gemini thinking budget; omit unless you know you need it |
@@ -170,7 +171,7 @@ pytest tests/ -q --deselect tests/test_github_client.py::test_live_public_pr_fet
 
 ## Deployment
 
-The app is deployed on [Render](https://render.com) at [https://agentic-pr-review-l6fx.onrender.com](https://agentic-pr-review-l6fx.onrender.com). Set the same environment variables as local `.env` in the Render dashboard (at minimum `GROQ_API_KEY` and/or `GOOGLE_API_KEY`; `GITHUB_TOKEN` recommended).
+The app is deployed on [Render](https://render.com) at [https://agentic-pr-review-l6fx.onrender.com](https://agentic-pr-review-l6fx.onrender.com). Set the same environment variables as local `.env` in the Render dashboard (at minimum `GOOGLE_API_KEY`; `GROQ_API_KEY` for fallback; `GITHUB_TOKEN` recommended).
 
 ## Roadmap
 

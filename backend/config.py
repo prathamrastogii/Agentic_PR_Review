@@ -18,8 +18,9 @@ def _optional_int_env(name: str) -> int | None:
 
 GITHUB_TOKEN: str | None = _optional_env("GITHUB_TOKEN")
 
-LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "groq").strip().lower()
+LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "google").strip().lower()
 LLM_FALLBACK_PROVIDER: str | None = _optional_env("LLM_FALLBACK_PROVIDER")
+LLM_TIMEOUT_SECONDS: float = float(os.getenv("LLM_TIMEOUT_SECONDS", "180"))
 
 GROQ_API_KEY: str | None = _optional_env("GROQ_API_KEY")
 GROQ_MODEL: str | None = _optional_env("GROQ_MODEL")

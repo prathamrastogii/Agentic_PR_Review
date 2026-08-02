@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from backend.agent.llm import LLMRateLimitError, StructuredOutputError
+from backend.agent.llm import LLMRateLimitError, LLMTimeoutError, StructuredOutputError
 from backend.agent.providers import available_providers, build_chat_model, resolve_llm_config
 from backend.config import GITHUB_TOKEN
 from backend.github.client import GitHubAPIError, github_error_response
@@ -43,6 +43,8 @@ def _github_token_configured(request: ReviewRequest) -> bool:
 def _review_error_payload(exc: Exception, *, token_configured: bool) -> tuple[int, str]:
     if isinstance(exc, LLMRateLimitError):
         return 429, "LLM rate limit reached on all configured providers. Please retry later."
+    if isinstance(exc, LLMTimeoutError):
+        return 504, str(exc)
     if isinstance(exc, StructuredOutputError):
         return 500, "The model failed to produce a valid review."
     if isinstance(exc, ValueError):
@@ -156,6 +158,8 @@ async def test_llm_connection(request: LLMTestRequest):
     """Minimal provider ping: validates key and model without storing credentials."""
     from langchain_core.messages import HumanMessage
 
+    from backend.agent.llm import LLMTimeoutError, _ainvoke_with_timeout
+
     try:
         llm_config = resolve_llm_config(
             provider=request.provider,
@@ -163,10 +167,15 @@ async def test_llm_connection(request: LLMTestRequest):
             api_key=request.api_key,
         )
         llm = build_chat_model(llm_config)
-        await llm.ainvoke([HumanMessage(content="Reply with exactly: OK")])
+        await _ainvoke_with_timeout(
+            llm.ainvoke([HumanMessage(content="Reply with exactly: OK")]),
+            provider=llm_config.provider,
+        )
         return {"ok": True, "provider": llm_config.provider, "model": llm_config.model}
     except LLMRateLimitError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except LLMTimeoutError as exc:
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
@@ -204,6 +213,9 @@ async def create_review(request: ReviewRequest) -> ReviewVerdict:
             status_code=429,
             detail="LLM rate limit reached on all configured providers. Please retry later.",
         ) from exc
+    except LLMTimeoutError as exc:
+        logger.warning("Responding 504 | LLM timeout: %s", exc)
+        raise HTTPException(status_code=504, detail=str(exc)) from exc
     except StructuredOutputError as exc:
         logger.error("Responding 500 | model output unusable: %s", exc)
         raise HTTPException(

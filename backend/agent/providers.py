@@ -139,8 +139,8 @@ def resolve_fallback_config(current: LLMConfig) -> LLMConfig | None:
     """Return the next provider to try when `current` is rate-limited, or None."""
     fallback_id = config.LLM_FALLBACK_PROVIDER
     if not fallback_id:
-        # Sensible default for the free-tier stack: Groq -> Gemini.
-        fallback_id = "google" if current.provider == "groq" else None
+        # Default free-tier stack: Gemini primary, Groq backup.
+        fallback_id = "groq" if current.provider == "google" else None
     if not fallback_id or fallback_id == current.provider:
         return None
     try:
