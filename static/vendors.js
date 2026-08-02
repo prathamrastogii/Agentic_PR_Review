@@ -1,5 +1,5 @@
 /**
- * Bring-your-own-LLM vendor catalog — edit this file when models change.
+ * Bring-your-own-LLM vendor catalog. Edit this file when models change.
  * UI reads from here; do not hardcode vendors in HTML.
  */
 export const LLM_VENDORS = [

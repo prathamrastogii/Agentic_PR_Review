@@ -3,7 +3,8 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from backend.agent.baseline import build_baseline_prompt, format_diffs
+from backend.agent.baseline import build_baseline_prompt
+from backend.github.diff_format import format_diffs
 from backend.agent.llm import extract_json, parse_structured_response
 from backend.github.models import FileDiff, PRMetadata
 from backend.models.review import ReviewIssue, ReviewVerdict

@@ -1,6 +1,6 @@
 # AI-Powered PR Review Agent
 
-An agentic code review system that investigates pull requests with a capped investigation budget — fetching additional files when the diff alone isn't enough context.
+An agentic code review system that investigates pull requests with a capped investigation budget, fetching additional files when the diff alone isn't enough context.
 
 ## Prerequisites
 
@@ -16,7 +16,7 @@ python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-# Edit .env — add GROQ_API_KEY before Phase 2; GITHUB_TOKEN optional for public PRs
+# Edit .env: add GROQ_API_KEY before Phase 2; GITHUB_TOKEN optional for public PRs
 ```
 
 ## Run locally

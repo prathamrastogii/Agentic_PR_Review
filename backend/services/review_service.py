@@ -120,7 +120,11 @@ async def _execute_review(
                 metadata, files, github_client, budget, llm_config
             )
 
-        verdict = enrich_verdict(metadata, verdict, files)
+        try:
+            verdict = enrich_verdict(metadata, verdict, files, mode=mode)
+        except Exception as exc:
+            logger.exception("Verdict enrichment failed")
+            raise RuntimeError(f"Could not finalize review scores: {exc}") from exc
 
         logger.info(
             "=== Review finished | mode=%s provider=%s issues=%d confidence=%s score=%s partial=%s "
@@ -137,6 +141,7 @@ async def _execute_review(
         await emit_review_event(
             {"type": "verdict", "data": verdict.model_dump(mode="json")}
         )
+        logger.info("Review stream | verdict queued for client")
         return verdict
 
 
@@ -176,7 +181,7 @@ async def run_review(
             raise
 
         logger.warning(
-            "Provider %s rate-limited mid-review — restarting from scratch with %s/%s",
+            "Provider %s rate-limited mid-review, restarting from scratch with %s/%s",
             exc.provider,
             fallback.provider,
             fallback.model,

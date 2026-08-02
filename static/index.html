@@ -137,7 +137,7 @@
               </div>
               <div class="product-preview__issue">
                 <span class="severity-dot severity-dot--warning"></span>
-                <span><code>auth/handler.py:84</code> — Missing null check on refresh token</span>
+                <span><code>auth/handler.py:84</code>: Missing null check on refresh token</span>
               </div>
             </div>
           </aside>
@@ -209,7 +209,7 @@
               <label class="field-label" for="pr-url">Pull request URL</label>
               <input id="pr-url" name="pr_url" type="url" class="text-input" placeholder="https://github.com/owner/repo/pull/123" required autocomplete="off" />
 
-              <label class="field-label" for="github-token">GitHub token <span class="field-optional">optional — private repos</span></label>
+              <label class="field-label" for="github-token">Add GitHub token <span class="field-optional">(for private repos)</span></label>
               <div class="input-with-toggle">
                 <input id="github-token" type="password" class="text-input" placeholder="ghp_… or fine-grained token" autocomplete="off" />
                 <button type="button" class="input-toggle-btn" id="toggle-github-token" aria-label="Show GitHub token">Show</button>
@@ -299,30 +299,44 @@
               <div class="metrics-row" id="metrics-row">
                 <article class="metric-card metric-card--context" id="metric-context-card" aria-labelledby="metric-context-label">
                   <h3 id="metric-context-label" class="metric-card__label">PR Context</h3>
-                  <p id="context-repo" class="metric-card__value metric-card__value--sm">—</p>
+                  <p id="context-repo" class="metric-card__value metric-card__value--sm">-</p>
                   <p id="context-branches" class="metric-card__caption"></p>
                   <div id="context-badges" class="context-badges"></div>
                 </article>
-                <article class="metric-card metric-card--confidence" aria-labelledby="metric-confidence-label">
-                  <h3 id="metric-confidence-label" class="metric-card__label">Confidence</h3>
-                  <div class="confidence-chart" id="confidence-chart">
-                    <svg class="confidence-chart__svg" viewBox="0 0 36 36" aria-hidden="true">
-                      <path class="confidence-chart__track" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
-                      <path id="confidence-chart-fill" class="confidence-chart__fill" stroke-dasharray="0, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                <article class="metric-card metric-card--readiness" aria-labelledby="metric-readiness-label">
+                  <h3 id="metric-readiness-label" class="metric-card__label">PR readiness</h3>
+                  <p class="metric-card__hint">Safe to merge for this aim</p>
+                  <div class="metric-chart readiness-chart" id="readiness-chart">
+                    <svg class="metric-chart__svg" viewBox="0 0 36 36" aria-hidden="true">
+                      <path class="metric-chart__track" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                      <path id="readiness-chart-fill" class="metric-chart__fill" stroke-dasharray="0, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
                     </svg>
-                    <span id="confidence-value" class="confidence-chart__value">—</span>
+                    <span id="readiness-value" class="metric-chart__value">-</span>
+                  </div>
+                  <p id="readiness-caption" class="metric-card__caption"></p>
+                  <ul id="readiness-tips" class="metric-tips" hidden aria-label="How to improve PR readiness"></ul>
+                </article>
+                <article class="metric-card metric-card--confidence" aria-labelledby="metric-confidence-label">
+                  <h3 id="metric-confidence-label" class="metric-card__label">Review confidence</h3>
+                  <p class="metric-card__hint">Trust in this review given available context</p>
+                  <div class="metric-chart confidence-chart" id="confidence-chart">
+                    <svg class="metric-chart__svg" viewBox="0 0 36 36" aria-hidden="true">
+                      <path class="metric-chart__track" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                      <path id="confidence-chart-fill" class="metric-chart__fill" stroke-dasharray="0, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                    </svg>
+                    <span id="confidence-value" class="metric-chart__value">-</span>
                   </div>
                   <p id="confidence-caption" class="metric-card__caption"></p>
-                  <ul id="confidence-tips" class="confidence-tips" hidden aria-label="How to improve review confidence"></ul>
+                  <ul id="confidence-tips" class="metric-tips" hidden aria-label="Review confidence caveats"></ul>
                 </article>
                 <article class="metric-card metric-card--progress" aria-labelledby="metric-progress-label">
                   <h3 id="metric-progress-label" class="metric-card__label">Analysis Progress</h3>
-                  <p id="progress-value" class="metric-card__value">—</p>
+                  <p id="progress-value" class="metric-card__value">-</p>
                   <p id="progress-caption" class="metric-card__caption"></p>
                   <button type="button" id="revisit-stream-btn" class="text-link revisit-stream-btn" hidden>View response</button>
                 </article>
                 <article class="metric-card metric-card--stats" aria-labelledby="metric-stats-label">
-                  <h3 id="metric-stats-label" class="metric-card__label">Stats</h3>
+                  <h3 id="metric-stats-label" class="metric-card__label">Risk Stats</h3>
                   <div id="stats-grid" class="stats-grid"></div>
                 </article>
               </div>
@@ -383,6 +397,6 @@
       </section>
     </div>
 
-    <script src="/app.js" type="module"></script>
+    <script src="/app.js?v=5" type="module"></script>
   </body>
 </html>

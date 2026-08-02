@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import logging
 from collections.abc import AsyncIterator
@@ -22,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 if not GITHUB_TOKEN:
     logger.warning(
-        "GITHUB_TOKEN is not set — GitHub API calls are unauthenticated (~60 requests/hour). "
+        "GITHUB_TOKEN is not set. GitHub API calls are unauthenticated (~60 requests/hour). "
         "Add GITHUB_TOKEN to .env for 5,000 requests/hour."
     )
 
@@ -55,9 +56,14 @@ def _review_error_payload(exc: Exception, *, token_configured: bool) -> tuple[in
     return 500, f"Unexpected error: {type(exc).__name__}"
 
 
+def _format_sse(payload: dict) -> str:
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
 async def _review_event_stream(request: ReviewRequest) -> AsyncIterator[str]:
     queue: asyncio.Queue[tuple[str, dict | None]] = asyncio.Queue()
     settings = request.llm
+    heartbeat_seconds = 3.0
 
     async def emit(event: dict) -> None:
         await queue.put(("event", event))
@@ -86,16 +92,52 @@ async def _review_event_stream(request: ReviewRequest) -> AsyncIterator[str]:
         finally:
             await queue.put(("done", None))
 
+    async def heartbeat() -> None:
+        try:
+            while True:
+                await asyncio.sleep(heartbeat_seconds)
+                await queue.put(("heartbeat", None))
+        except asyncio.CancelledError:
+            return
+
+    yield _format_sse({"type": "ping"})
     task = asyncio.create_task(worker())
+    heartbeat_task = asyncio.create_task(heartbeat())
     try:
         while True:
             kind, payload = await queue.get()
             if kind == "done":
-                yield f"data: {json.dumps({'type': 'done'})}\n\n"
+                yield _format_sse({"type": "done"})
                 break
-            yield f"data: {json.dumps(payload)}\n\n"
+            if kind == "heartbeat":
+                yield _format_sse({"type": "ping"})
+                continue
+            try:
+                yield _format_sse(payload)
+            except (TypeError, ValueError) as exc:
+                event_type = payload.get("type") if isinstance(payload, dict) else "unknown"
+                logger.exception("Failed to encode stream event | type=%s", event_type)
+                yield _format_sse(
+                    {
+                        "type": "error",
+                        "status": 500,
+                        "detail": f"Could not serialize stream event: {exc}",
+                    }
+                )
+                break
+            if isinstance(payload, dict) and payload.get("type") == "verdict":
+                logger.info("Review stream | verdict event sent")
     finally:
-        await task
+        heartbeat_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await heartbeat_task
+        if not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        else:
+            with contextlib.suppress(Exception):
+                await task
 
 
 @app.get("/health")
@@ -111,7 +153,7 @@ async def list_providers():
 
 @app.post("/api/configure-llm/test")
 async def test_llm_connection(request: LLMTestRequest):
-    """Minimal provider ping — validates key and model without storing credentials."""
+    """Minimal provider ping: validates key and model without storing credentials."""
     from langchain_core.messages import HumanMessage
 
     try:

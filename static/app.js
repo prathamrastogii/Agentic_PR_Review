@@ -22,10 +22,22 @@ import {
   saveTheme,
 } from "./session.js";
 import { showToast } from "./toast.js";
-import { ReviewStreamError, consumeReviewStream } from "./stream.js";
+import { ReviewStreamError, consumeReviewStream } from "./stream.js?v=5";
+import {
+  CONFIDENCE_LEVEL_HIGH,
+  CONFIDENCE_LEVEL_MEDIUM,
+  CONFIDENCE_TIPS_THRESHOLD,
+  ContractError,
+  READINESS_TIPS_THRESHOLD,
+  SEVERITY_LABEL,
+  SEVERITY_ORDER,
+  scoreToLevel,
+  validatePrMetadata,
+  validateStreamEvent,
+  validateVerdict,
+} from "./contract.js?v=1";
 
-const CONFIDENCE_TIPS_THRESHOLD = 80;
-const SEVERITY_LABEL = { error: "High", warning: "Medium", suggestion: "Low" };
+const INSIGHT_VISIBLE_MAX = 4;
 
 const TIMELINE_PHASES = [
   { id: "parse", match: /parsing pull request/i, label: "Parse URL" },
@@ -98,6 +110,11 @@ const confidenceChartFill = document.getElementById("confidence-chart-fill");
 const confidenceValue = document.getElementById("confidence-value");
 const confidenceCaption = document.getElementById("confidence-caption");
 const confidenceTips = document.getElementById("confidence-tips");
+const readinessChart = document.getElementById("readiness-chart");
+const readinessChartFill = document.getElementById("readiness-chart-fill");
+const readinessValue = document.getElementById("readiness-value");
+const readinessCaption = document.getElementById("readiness-caption");
+const readinessTips = document.getElementById("readiness-tips");
 const contextRepo = document.getElementById("context-repo");
 const contextBranches = document.getElementById("context-branches");
 const contextBadges = document.getElementById("context-badges");
@@ -117,7 +134,6 @@ const newReviewBtn = document.getElementById("new-review-btn");
 const reviewHistorySection = document.getElementById("review-history-section");
 const reviewHistoryList = document.getElementById("review-history-list");
 
-const INSIGHT_VISIBLE_MAX = 4;
 const insightLists = {
   good: document.getElementById("insight-good-list"),
   risk: document.getElementById("insight-risk-list"),
@@ -543,7 +559,7 @@ function updateThinkingStreamControls() {
   actionsRevisitStream.hidden = !showControls;
 
   if (showControls) {
-    thinkingCollapsedHint.textContent = `${thinkingStepCount} step(s) recorded — expand to read the full response.`;
+    thinkingCollapsedHint.textContent = `${thinkingStepCount} step(s) recorded. Expand to read the full response.`;
     thinkingToggle.textContent = collapsed ? "View response" : "Hide response";
     thinkingToggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
   }
@@ -568,6 +584,7 @@ function updateBudgetIndicator(used, max) {
 }
 
 function handleStreamEvent(event) {
+  validateStreamEvent(event);
   switch (event.type) {
     case "status":
       setTimelinePhase(event.text || "");
@@ -578,7 +595,7 @@ function handleStreamEvent(event) {
       if (/verdict ready/i.test(event.text || "")) setTimelinePhase(event.text);
       break;
     case "pr_metadata":
-      capturedPrMetadata = event.data;
+      capturedPrMetadata = validatePrMetadata(event.data);
       break;
     case "budget":
       updateBudgetIndicator(event.used ?? 0, event.max);
@@ -602,23 +619,53 @@ function handleStreamEvent(event) {
   }
 }
 
+function friendlyStreamError(err) {
+  if (err instanceof ReviewStreamError) return err.message;
+  const name = err?.name && err.name !== "Error" ? `${err.name}: ` : "";
+  const msg = err?.message || (err != null ? String(err) : "");
+  const combined = `${name}${msg}`.trim();
+  if (
+    combined === "Failed to fetch" ||
+    combined.includes("Failed to fetch") ||
+    combined.includes("NetworkError") ||
+    combined.includes("Load failed") ||
+    combined.includes("network")
+  ) {
+    return (
+      "Lost connection to the server before the review finished. " +
+      "If you are running locally with auto-reload, wait for the server to settle and try again."
+    );
+  }
+  return combined || "Could not reach the server.";
+}
+
 async function runReviewWithStream(body) {
   let verdict = null;
   let stepCount = 0;
 
-  const response = await fetch("/api/review/stream", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  let response;
+  try {
+    response = await fetch("/api/review/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    throw new ReviewStreamError(friendlyStreamError(err), 0);
+  }
 
   const sawDone = await consumeReviewStream(response, (event) => {
-    if (event.type === "verdict") {
-      verdict = event.data;
-      return;
+    try {
+      if (event.type === "verdict") {
+        verdict = validateVerdict(event.data);
+        return;
+      }
+      if (event.type !== "done") stepCount += 1;
+      handleStreamEvent(event);
+    } catch (eventErr) {
+      console.error("Failed to handle stream event", event?.type, eventErr);
+      if (eventErr instanceof ContractError || event?.type === "verdict") throw eventErr;
     }
-    if (event.type !== "done") stepCount += 1;
-    handleStreamEvent(event);
   });
 
   return { verdict, sawDone, stepCount };
@@ -754,28 +801,72 @@ function renderIssues(issues) {
   }
 }
 
-function renderConfidenceChart(verdict) {
-  const score =
-    verdict.confidence_score ??
-    (verdict.confidence === "high" ? 72 : verdict.confidence === "medium" ? 48 : 25);
-  const level = score >= 72 ? "high" : score >= 48 ? "medium" : "low";
-  confidenceChart.className = `confidence-chart confidence-chart--${level}`;
-  confidenceChartFill.setAttribute("stroke-dasharray", `${score}, 100`);
-  confidenceValue.textContent = `${score}%`;
-  confidenceCaption.textContent =
-    verdict.confidence_rationale || `${score}% review confidence`;
+function renderMetricChart({
+  chartEl,
+  fillEl,
+  valueEl,
+  captionEl,
+  tipsEl,
+  score,
+  fallbackLevel,
+  rationale,
+  tips,
+  tipsThreshold,
+  fallbackCaption,
+}) {
+  const resolvedScore =
+    score ??
+    (fallbackLevel === "high"
+      ? CONFIDENCE_LEVEL_HIGH
+      : fallbackLevel === "medium"
+        ? CONFIDENCE_LEVEL_MEDIUM
+        : 25);
+  const level = scoreToLevel(resolvedScore, fallbackLevel);
+  chartEl.className = `metric-chart ${chartEl.id} metric-chart--${level}`;
+  fillEl.setAttribute("stroke-dasharray", `${resolvedScore}, 100`);
+  valueEl.textContent = `${resolvedScore}%`;
+  captionEl.textContent = rationale || fallbackCaption || `${resolvedScore}%`;
 
-  const tips = verdict.confidence_tips || [];
-  if (!confidenceTips) return;
-  if (score < CONFIDENCE_TIPS_THRESHOLD && tips.length) {
-    confidenceTips.hidden = false;
-    confidenceTips.innerHTML = tips
-      .map((tip) => `<li>${escapeHtml(tip)}</li>`)
-      .join("");
+  if (!tipsEl) return;
+  if (resolvedScore < tipsThreshold && tips?.length) {
+    tipsEl.hidden = false;
+    tipsEl.innerHTML = tips.map((tip) => `<li>${escapeHtml(tip)}</li>`).join("");
   } else {
-    confidenceTips.hidden = true;
-    confidenceTips.innerHTML = "";
+    tipsEl.hidden = true;
+    tipsEl.innerHTML = "";
   }
+}
+
+function renderReadinessChart(verdict) {
+  renderMetricChart({
+    chartEl: readinessChart,
+    fillEl: readinessChartFill,
+    valueEl: readinessValue,
+    captionEl: readinessCaption,
+    tipsEl: readinessTips,
+    score: verdict.pr_readiness_score,
+    fallbackLevel: verdict.pr_readiness || verdict.confidence,
+    rationale: verdict.pr_readiness_rationale,
+    tips: verdict.pr_readiness_tips,
+    tipsThreshold: READINESS_TIPS_THRESHOLD,
+    fallbackCaption: "PR readiness",
+  });
+}
+
+function renderConfidenceChart(verdict) {
+  renderMetricChart({
+    chartEl: confidenceChart,
+    fillEl: confidenceChartFill,
+    valueEl: confidenceValue,
+    captionEl: confidenceCaption,
+    tipsEl: confidenceTips,
+    score: verdict.confidence_score,
+    fallbackLevel: verdict.confidence,
+    rationale: verdict.confidence_rationale,
+    tips: verdict.confidence_tips,
+    tipsThreshold: CONFIDENCE_TIPS_THRESHOLD,
+    fallbackCaption: `${verdict.confidence_score ?? ""}% review confidence`.trim(),
+  });
 }
 
 function renderStats(issues) {
@@ -798,7 +889,7 @@ function renderStats(issues) {
 
 function renderContext(metadata, mode) {
   if (!metadata) {
-    contextRepo.textContent = "—";
+    contextRepo.textContent = "-";
     contextBranches.textContent = "";
     contextBadges.innerHTML = "";
     return;
@@ -852,6 +943,7 @@ function renderProgress(verdict, mode) {
 }
 
 function renderVerdict(verdict, mode, prUrl, { fromHistory = false } = {}) {
+  validateVerdict(verdict);
   currentVerdict = verdict;
   currentPrUrl = prUrl;
   currentReviewMode = mode;
@@ -863,6 +955,7 @@ function renderVerdict(verdict, mode, prUrl, { fromHistory = false } = {}) {
 
   renderPrHeader(prUrl);
   renderContext(capturedPrMetadata, mode);
+  renderReadinessChart(verdict);
   renderConfidenceChart(verdict);
   renderProgress(verdict, mode);
   renderStats(verdict.issues);
@@ -935,7 +1028,7 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
-// —— Event listeners ——
+// Event listeners
 
 stepper.addEventListener("click", (e) => {
   const btn = e.target.closest(".stepper__step");
@@ -1109,16 +1202,33 @@ form.addEventListener("submit", async (event) => {
     }
     if (!result.sawDone) streamLostBanner.hidden = false;
 
-    collapseThinkingPanel(stepCount);
-    renderVerdict(verdict, appState.reviewMode, prUrl);
+    try {
+      collapseThinkingPanel(stepCount);
+      renderVerdict(verdict, appState.reviewMode, prUrl);
+    } catch (renderErr) {
+      console.error("Failed to render review results", renderErr);
+      setStatus(
+        friendlyStreamError(renderErr) || "Review finished but the UI could not display results.",
+        "error"
+      );
+      showToast("Could not display review results", { type: "error" });
+    }
   } catch (err) {
-    const msg = err instanceof ReviewStreamError ? err.message : "Could not reach the server.";
+    console.error("Review stream failed", err);
+    const msg =
+      err instanceof ContractError
+        ? `Review data was invalid: ${err.message}`
+        : friendlyStreamError(err);
     setStatus(msg, "error");
     showToast(msg, { type: "error" });
     workspaceEmpty.classList.remove("is-hidden");
     if (verdict) {
-      collapseThinkingPanel(stepCount);
-      renderVerdict(verdict, appState.reviewMode, prUrl);
+      try {
+        collapseThinkingPanel(stepCount);
+        renderVerdict(verdict, appState.reviewMode, prUrl);
+      } catch (renderErr) {
+        console.error("Failed to render partial review results", renderErr);
+      }
     }
   } finally {
     setSubmitLoading(false);

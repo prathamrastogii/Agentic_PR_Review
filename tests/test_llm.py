@@ -83,6 +83,32 @@ class TestStringCoercion:
         assert response.file_path is None
         assert response.reason is None
 
+    def test_evaluate_response_coerces_null_issues_and_insights(self):
+        response = EvaluateResponse.model_validate(
+            {
+                "action": "investigate",
+                "file_path": "src/services/api.js",
+                "reason": "To verify the API helpers",
+                "issues": None,
+                "insights": None,
+            }
+        )
+        assert response.issues == []
+        assert response.insights.risks == []
+
+    def test_groq_rejected_investigate_payload_parses(self):
+        from backend.agent.llm import parse_structured_response
+
+        raw = (
+            '<function=EvaluateResponse>{"action": "investigate", "confidence": null, '
+            '"file_path": "src/services/api.js", "insights": null, "issues": null, '
+            '"partial_investigation": false, "reason": "To verify the API helpers", '
+            '"summary": null}</function>'
+        )
+        response = parse_structured_response(raw, EvaluateResponse)
+        assert response.action == "investigate"
+        assert response.file_path == "src/services/api.js"
+
     def test_verdict_coerces_string_bool(self):
         verdict = ReviewVerdict.model_validate(
             {
@@ -111,6 +137,26 @@ class TestStringCoercion:
             }
         )
         assert verdict.issues[0].line is None
+
+
+@pytest.mark.asyncio
+async def test_groq_rejected_investigate_salvaged_on_first_attempt():
+    """Groq often returns investigate actions with null issues/insights collections."""
+    generation = (
+        '<function=EvaluateResponse>{"action": "investigate", "confidence": null, '
+        '"file_path": "src/services/api.js", "insights": null, "issues": null, '
+        '"partial_investigation": false, "reason": "To verify the API helpers", '
+        '"summary": null}</function>'
+    )
+    llm, structured_llm = fake_llm(FakeGroqBadRequest(generation))
+
+    with patch("backend.agent.llm.get_llm", return_value=llm):
+        result = await invoke_structured("system", "user", EvaluateResponse)
+
+    assert result.action == "investigate"
+    assert result.file_path == "src/services/api.js"
+    assert result.issues == []
+    assert structured_llm.ainvoke.await_count == 1
 
 
 @pytest.mark.asyncio

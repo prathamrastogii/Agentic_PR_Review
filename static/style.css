@@ -71,7 +71,7 @@ body {
   box-shadow: var(--shadow-md);
 }
 
-/* —— Title bar —— */
+/* Title bar */
 .title-bar {
   display: flex;
   align-items: center;
@@ -221,7 +221,7 @@ body {
   display: block;
 }
 
-/* —— Views —— */
+/* Views */
 .view {
   flex: 1;
   min-height: calc(100vh - var(--title-bar-height));
@@ -231,7 +231,7 @@ body {
   display: none !important;
 }
 
-/* —— Welcome (Phase 1) —— */
+/* Welcome (Phase 1) */
 .view--welcome {
   display: flex;
   align-items: center;
@@ -351,7 +351,7 @@ body {
   background: var(--critical-bg);
 }
 
-/* —— Config (Phase 2) —— */
+/* Config (Phase 2) */
 .view--config {
   display: flex;
   align-items: flex-start;
@@ -518,7 +518,7 @@ body {
   margin-bottom: 0;
 }
 
-/* —— Workspace split —— */
+/* Workspace split */
 .view--dashboard {
   display: flex;
   flex-direction: column;
@@ -562,7 +562,7 @@ body {
   min-width: 0;
 }
 
-/* —— Empty state —— */
+/* Empty state */
 .workspace-empty {
   flex: 1;
   display: flex;
@@ -599,7 +599,7 @@ body {
   line-height: 1.6;
 }
 
-/* —— Form —— */
+/* Form */
 .field-label {
   display: block;
   margin-bottom: 0.35rem;
@@ -718,7 +718,7 @@ body {
   line-height: 1.45;
 }
 
-/* —— Status —— */
+/* Status */
 .status {
   padding: 0.7rem 0.9rem;
   border: 1px solid var(--border-card);
@@ -735,7 +735,7 @@ body {
   color: var(--critical);
 }
 
-/* —— Thinking feed (live agent) —— */
+/* Thinking feed (live agent) */
 .thinking-panel {
   display: flex;
   flex-direction: column;
@@ -928,7 +928,7 @@ body {
   color: var(--critical);
 }
 
-/* —— Results —— */
+/* Results */
 #results[hidden] {
   display: none !important;
 }
@@ -949,7 +949,7 @@ body {
   box-shadow: var(--shadow-sm);
 }
 
-/* —— PR header —— */
+/* PR header */
 .pr-header {
   padding: 0.25rem 0 0.15rem;
 }
@@ -963,10 +963,10 @@ body {
   line-height: 1.3;
 }
 
-/* —— Metrics row —— */
+/* Metrics row */
 .metrics-row {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 0.85rem;
 }
 
@@ -978,17 +978,95 @@ body {
   box-shadow: var(--shadow-sm);
 }
 
-.metric-card--confidence {
+.metric-card--confidence,
+.metric-card--readiness {
   background: var(--bg-card);
 }
 
+/* Radial metric charts (PR readiness + review confidence) */
+.metric-chart,
+.confidence-chart,
+.readiness-chart {
+  position: relative;
+  width: 4.5rem;
+  height: 4.5rem;
+  margin: 0 auto 0.35rem;
+}
+
+.metric-chart__svg,
+.confidence-chart__svg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.metric-chart__track,
+.confidence-chart__track {
+  fill: none;
+  stroke: var(--border-subtle);
+  stroke-width: 2.8;
+}
+
+.metric-chart__fill,
+.confidence-chart__fill {
+  fill: none;
+  stroke: var(--primary);
+  stroke-width: 2.8;
+  stroke-linecap: round;
+  transition: stroke-dasharray 0.6s ease, stroke 0.3s ease;
+}
+
+.metric-chart--high .metric-chart__fill,
+.confidence-chart--high .confidence-chart__fill {
+  stroke: var(--success);
+}
+
+.metric-chart--medium .metric-chart__fill,
+.confidence-chart--medium .confidence-chart__fill {
+  stroke: var(--warning);
+}
+
+.metric-chart--low .metric-chart__fill,
+.confidence-chart--low .confidence-chart__fill {
+  stroke: var(--critical);
+}
+
+.metric-chart__value,
+.confidence-chart__value {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.metric-tips,
+.confidence-tips {
+  margin: 0.55rem 0 0;
+  padding-left: 1rem;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
 .metric-card__label {
-  margin: 0 0 0.65rem;
+  margin: 0 0 0.25rem;
   font-size: 0.72rem;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-secondary);
+}
+
+.metric-card__hint {
+  margin: 0 0 0.65rem;
+  font-size: 0.68rem;
+  line-height: 1.35;
+  color: var(--text-secondary);
+  opacity: 0.85;
 }
 
 .metric-card__value {
@@ -1018,74 +1096,17 @@ body {
   margin-top: 0.35rem;
 }
 
-/* —— Confidence radial chart —— */
-.confidence-chart {
-  position: relative;
-  width: 4.5rem;
-  height: 4.5rem;
-  margin: 0 auto 0.35rem;
-}
-
-.confidence-chart__svg {
-  width: 100%;
-  height: 100%;
-  transform: rotate(-90deg);
-}
-
-.confidence-chart__track {
-  fill: none;
-  stroke: var(--border-subtle);
-  stroke-width: 2.8;
-}
-
-.confidence-chart__fill {
-  fill: none;
-  stroke: var(--primary);
-  stroke-width: 2.8;
-  stroke-linecap: round;
-  transition: stroke-dasharray 0.6s ease, stroke 0.3s ease;
-}
-
-.confidence-chart--high .confidence-chart__fill {
-  stroke: var(--success);
-}
-
-.confidence-chart--medium .confidence-chart__fill {
-  stroke: var(--warning);
-}
-
-.confidence-chart--low .confidence-chart__fill {
-  stroke: var(--critical);
-}
-
-.confidence-chart__value {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.85rem;
-  font-weight: 700;
-  color: var(--text-primary);
-}
-
-.confidence-tips {
-  margin: 0.55rem 0 0;
-  padding-left: 1rem;
-  font-size: 0.72rem;
-  line-height: 1.45;
-  color: var(--text-secondary);
-}
-
+.metric-tips li + li,
 .confidence-tips li + li {
   margin-top: 0.35rem;
 }
 
-.metric-card--confidence:has(.confidence-tips:not([hidden])) {
+.metric-card--confidence:has(.confidence-tips:not([hidden])),
+.metric-card--readiness:has(.metric-tips:not([hidden])) {
   border-color: color-mix(in srgb, var(--warning) 35%, var(--border-card));
 }
 
-/* —— Stats grid —— */
+/* Stats grid */
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -1146,7 +1167,7 @@ body {
   box-shadow: 0 8px 28px rgba(15, 23, 42, 0.12);
 }
 
-/* —— Insights —— */
+/* Insights */
 .insights-section {
   padding-bottom: 1.15rem;
   background: var(--bg-section);
@@ -1436,7 +1457,7 @@ body {
   border: 0;
 }
 
-/* —— Narrow fallback (still usable, not phone-first) —— */
+/* Narrow fallback (still usable, not phone-first) */
 @media (max-width: 900px) {
   .app {
     box-shadow: none;
@@ -1505,7 +1526,7 @@ body {
   }
 }
 
-/* —— Platform richness additions —— */
+/* Platform richness additions */
 
 .stepper {
   display: flex;

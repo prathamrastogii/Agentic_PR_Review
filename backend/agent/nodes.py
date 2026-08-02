@@ -1,6 +1,6 @@
 import logging
 
-from backend.agent.baseline import format_diffs
+from backend.github.diff_format import format_diffs
 from backend.agent.actions import EvaluateResponse
 from backend.agent.llm import (
     StructuredOutputError,
@@ -75,7 +75,7 @@ def _format_trail(trail: list[InvestigationStep]) -> str:
     if not trail:
         return ""
     steps = "\n".join(
-        f"{i}. {step.file_path} — {step.reason}" for i, step in enumerate(trail, 1)
+        f"{i}. {step.file_path}: {step.reason}" for i, step in enumerate(trail, 1)
     )
     return f"\n\n## Files you already investigated\n\n{steps}"
 

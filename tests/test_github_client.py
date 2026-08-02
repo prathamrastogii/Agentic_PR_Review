@@ -3,7 +3,12 @@ import pytest
 import respx
 from httpx import Response
 
-from backend.github.client import GitHubAPIError, GitHubClient, parse_pr_url
+from backend.github.client import (
+    GitHubAPIError,
+    GitHubClient,
+    github_error_response,
+    parse_pr_url,
+)
 from backend.github.models import FileDiff, PRMetadata
 
 
@@ -35,6 +40,19 @@ class TestParsePRUrl:
     def test_missing_pr_number_raises(self):
         with pytest.raises(ValueError):
             parse_pr_url("https://github.com/foo/bar")
+
+
+class TestGithubErrorResponse:
+    def test_404_without_token_mentions_private_repo(self):
+        exc = GitHubAPIError(404, "Not Found")
+        _, detail = github_error_response(exc, token_configured=False)
+        assert "GitHub token" in detail
+        assert "private" in detail.lower()
+
+    def test_404_with_token_mentions_access(self):
+        exc = GitHubAPIError(404, "Not Found")
+        _, detail = github_error_response(exc, token_configured=True)
+        assert "read access" in detail.lower()
 
 
 @pytest.fixture

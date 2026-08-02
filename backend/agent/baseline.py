@@ -1,40 +1,10 @@
 import logging
 
+from backend.github.diff_format import format_diffs
 from backend.github.models import FileDiff, PRMetadata
 from backend.models.review import ReviewVerdict
 
 logger = logging.getLogger(__name__)
-
-MAX_CHARS_PER_FILE = 8000
-MAX_TOTAL_DIFF_CHARS = 50000
-
-
-def format_diffs(files: list[FileDiff]) -> tuple[str, bool]:
-    """Format file diffs for the prompt. Returns (text, was_truncated)."""
-    parts: list[str] = []
-    total_chars = 0
-    truncated = False
-
-    for file_diff in files:
-        header = f"### {file_diff.filename} ({file_diff.status})"
-        if file_diff.patch:
-            patch = file_diff.patch
-            if len(patch) > MAX_CHARS_PER_FILE:
-                patch = patch[:MAX_CHARS_PER_FILE] + "\n... [patch truncated]"
-                truncated = True
-            block = f"{header}\n```diff\n{patch}\n```"
-        else:
-            block = f"{header}\n(no patch — file may be binary or too large)"
-
-        if total_chars + len(block) > MAX_TOTAL_DIFF_CHARS:
-            parts.append("... [remaining files omitted due to size limit]")
-            truncated = True
-            break
-
-        parts.append(block)
-        total_chars += len(block)
-
-    return "\n\n".join(parts), truncated
 
 
 def build_baseline_prompt(metadata: PRMetadata, files: list[FileDiff]) -> str:
