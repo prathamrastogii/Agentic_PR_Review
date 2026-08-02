@@ -4,6 +4,8 @@ An agentic pull request reviewer that reads GitHub diffs, investigates related f
 
 The web UI streams the agent loop live (SSE) so you can watch investigations happen in real time, not just read a final answer.
 
+**Live app:** [https://agentic-pr-review-l6fx.onrender.com](https://agentic-pr-review-l6fx.onrender.com)
+
 ## Features
 
 - **Agent mode** — LangGraph loop with a capped investigation budget; fetches out-of-diff files when the model needs more context
@@ -164,7 +166,11 @@ pytest tests/ -q --deselect tests/test_github_client.py::test_live_public_pr_fet
 - **Path guessing** — the agent must guess repository-relative file paths; wrong guesses consume budget but no longer abort the whole review.
 - **Model variability** — the model may put findings in insight bullets without structured `issues`; the server backfills issues from insights when possible.
 - **No persistence** — reviews are not stored in a database; history lives in browser `sessionStorage` only.
-- **Not deployed** — no production hosting config yet (`render.yaml` / Phase 6 still TODO).
+- **Hosted on Render** — free tier may cold-start after idle (first review can take 30–90 seconds).
+
+## Deployment
+
+The app is deployed on [Render](https://render.com) at [https://agentic-pr-review-l6fx.onrender.com](https://agentic-pr-review-l6fx.onrender.com). See `render.yaml` for the service definition. Set the same environment variables as local `.env` in the Render dashboard (at minimum `GROQ_API_KEY` and/or `GOOGLE_API_KEY`; `GITHUB_TOKEN` recommended).
 
 ## Roadmap
 
@@ -172,7 +178,7 @@ pytest tests/ -q --deselect tests/test_github_client.py::test_live_public_pr_fet
 |------|--------|
 | Core agent + API + UI | Done |
 | SSE streaming + insights + scoring | Done |
-| Deploy (e.g. Render) | Not started |
+| Deploy (Render) | Done |
 | Validation matrix (agent vs baseline on real PRs) | Not started |
 
 ## License
