@@ -966,7 +966,7 @@ body {
 /* Metrics row */
 .metrics-row {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 0.85rem;
 }
 
@@ -978,17 +978,95 @@ body {
   box-shadow: var(--shadow-sm);
 }
 
-.metric-card--confidence {
+.metric-card--confidence,
+.metric-card--readiness {
   background: var(--bg-card);
 }
 
+/* Radial metric charts (PR readiness + review confidence) */
+.metric-chart,
+.confidence-chart,
+.readiness-chart {
+  position: relative;
+  width: 4.5rem;
+  height: 4.5rem;
+  margin: 0 auto 0.35rem;
+}
+
+.metric-chart__svg,
+.confidence-chart__svg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.metric-chart__track,
+.confidence-chart__track {
+  fill: none;
+  stroke: var(--border-subtle);
+  stroke-width: 2.8;
+}
+
+.metric-chart__fill,
+.confidence-chart__fill {
+  fill: none;
+  stroke: var(--primary);
+  stroke-width: 2.8;
+  stroke-linecap: round;
+  transition: stroke-dasharray 0.6s ease, stroke 0.3s ease;
+}
+
+.metric-chart--high .metric-chart__fill,
+.confidence-chart--high .confidence-chart__fill {
+  stroke: var(--success);
+}
+
+.metric-chart--medium .metric-chart__fill,
+.confidence-chart--medium .confidence-chart__fill {
+  stroke: var(--warning);
+}
+
+.metric-chart--low .metric-chart__fill,
+.confidence-chart--low .confidence-chart__fill {
+  stroke: var(--critical);
+}
+
+.metric-chart__value,
+.confidence-chart__value {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.metric-tips,
+.confidence-tips {
+  margin: 0.55rem 0 0;
+  padding-left: 1rem;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
 .metric-card__label {
-  margin: 0 0 0.65rem;
+  margin: 0 0 0.25rem;
   font-size: 0.72rem;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-secondary);
+}
+
+.metric-card__hint {
+  margin: 0 0 0.65rem;
+  font-size: 0.68rem;
+  line-height: 1.35;
+  color: var(--text-secondary);
+  opacity: 0.85;
 }
 
 .metric-card__value {
@@ -1018,70 +1096,13 @@ body {
   margin-top: 0.35rem;
 }
 
-/* Confidence radial chart */
-.confidence-chart {
-  position: relative;
-  width: 4.5rem;
-  height: 4.5rem;
-  margin: 0 auto 0.35rem;
-}
-
-.confidence-chart__svg {
-  width: 100%;
-  height: 100%;
-  transform: rotate(-90deg);
-}
-
-.confidence-chart__track {
-  fill: none;
-  stroke: var(--border-subtle);
-  stroke-width: 2.8;
-}
-
-.confidence-chart__fill {
-  fill: none;
-  stroke: var(--primary);
-  stroke-width: 2.8;
-  stroke-linecap: round;
-  transition: stroke-dasharray 0.6s ease, stroke 0.3s ease;
-}
-
-.confidence-chart--high .confidence-chart__fill {
-  stroke: var(--success);
-}
-
-.confidence-chart--medium .confidence-chart__fill {
-  stroke: var(--warning);
-}
-
-.confidence-chart--low .confidence-chart__fill {
-  stroke: var(--critical);
-}
-
-.confidence-chart__value {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.85rem;
-  font-weight: 700;
-  color: var(--text-primary);
-}
-
-.confidence-tips {
-  margin: 0.55rem 0 0;
-  padding-left: 1rem;
-  font-size: 0.72rem;
-  line-height: 1.45;
-  color: var(--text-secondary);
-}
-
+.metric-tips li + li,
 .confidence-tips li + li {
   margin-top: 0.35rem;
 }
 
-.metric-card--confidence:has(.confidence-tips:not([hidden])) {
+.metric-card--confidence:has(.confidence-tips:not([hidden])),
+.metric-card--readiness:has(.metric-tips:not([hidden])) {
   border-color: color-mix(in srgb, var(--warning) 35%, var(--border-card));
 }
 

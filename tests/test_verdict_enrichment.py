@@ -2,8 +2,11 @@ from backend.github.models import FileDiff, PRMetadata
 from backend.models.review import ReviewInsights, ReviewIssue, ReviewVerdict
 from backend.services.verdict_enrichment import (
     CONFIDENCE_TIPS_THRESHOLD,
+    READINESS_TIPS_THRESHOLD,
     build_confidence_tips,
+    build_pr_readiness_tips,
     compute_confidence_score,
+    compute_pr_readiness_score,
     enrich_verdict,
     infer_pr_aim,
     sync_insights_to_issues,
@@ -151,8 +154,74 @@ def test_build_confidence_tips_when_score_below_threshold():
     tips = build_confidence_tips(_metadata(body=None), verdict, _files(), 65)
 
     assert tips
-    assert any("description" in tip.lower() for tip in tips)
-    assert any("investigation" in tip.lower() for tip in tips)
+    assert any("description" in tip.lower() or "context" in tip.lower() for tip in tips)
+    assert any("investigation" in tip.lower() or "ended" in tip.lower() for tip in tips)
+
+
+def test_obvious_single_file_issue_scores_high_review_confidence():
+    """A correct review of an obvious single-file problem should score high."""
+    metadata = _metadata(
+        title="updated movies player for live streaming",
+        body=None,
+        head_ref="feat/live-stream",
+    )
+    files = [
+        FileDiff(
+            filename="src/pages/Home.jsx",
+            status="modified",
+            patch=(
+                "@@ -1,120 +1 @@\n"
+                "-import React from 'react';\n"
+                "+total work done\n"
+            ),
+            additions=1,
+            deletions=120,
+            changes=121,
+        )
+    ]
+    verdict = ReviewVerdict(
+        summary="The Home page was replaced with placeholder text.",
+        confidence="high",
+        issues=[
+            ReviewIssue(
+                file="src/pages/Home.jsx",
+                line=1,
+                severity="error",
+                category="correctness",
+                message="The entire Home page component was deleted and replaced with placeholder text.",
+            )
+        ],
+        insights=ReviewInsights(
+            risks=["Deleting the entire page implementation breaks the application."],
+        ),
+    )
+
+    enriched = enrich_verdict(metadata, verdict, files, mode="agent")
+
+    assert enriched.confidence == "high"
+    assert enriched.confidence_score is not None
+    assert enriched.confidence_score >= 72
+    assert enriched.pr_readiness == "low"
+    assert enriched.pr_readiness_score is not None
+    assert enriched.pr_readiness_score < 45
+
+
+def test_multi_file_diff_only_with_high_model_claim_scores_low_review_confidence():
+    metadata = _metadata(body=None)
+    files = [
+        FileDiff(filename=f"src/module{i}.py", status="modified", patch="+x" * 20, changes=40)
+        for i in range(6)
+    ]
+    verdict = ReviewVerdict(
+        summary="Looks fine.",
+        confidence="high",
+        issues=[],
+    )
+
+    score, _, level = compute_confidence_score(metadata, verdict, files, mode="agent")
+
+    assert level in ("low", "medium")
+    assert score < 72
 
 
 def test_enrich_verdict_caps_partial_investigation_at_medium():
@@ -213,50 +282,16 @@ def test_enrich_verdict_includes_tips_when_score_low():
         assert enriched.confidence_tips
 
 
-def test_fake_placeholder_pr_scores_low_in_agent_mode():
-    """Destructive placeholder PRs must not show high review confidence."""
-    metadata = _metadata(
-        title="updated movies player for live streaming",
-        body=None,
-        head_ref="feat/live-stream",
-    )
-    files = [
-        FileDiff(
-            filename="src/pages/Home.jsx",
-            status="modified",
-            patch=(
-                "@@ -1,120 +1 @@\n"
-                "-import React from 'react';\n"
-                "-// ... entire component removed\n"
-                "+total work done\n"
-            ),
-            additions=1,
-            deletions=120,
-            changes=121,
-        )
-    ]
+def test_clean_pr_scores_high_readiness():
+    metadata = _metadata(body="Adds input validation and unit tests for the workflow map change.")
     verdict = ReviewVerdict(
-        summary="The Home page was replaced with placeholder text.",
+        summary="Focused validation improvement with tests.",
         confidence="high",
-        issues=[
-            ReviewIssue(
-                file="src/pages/Home.jsx",
-                line=1,
-                severity="error",
-                category="correctness",
-                message="The entire Home page component was deleted and replaced with placeholder text.",
-            )
-        ],
-        insights=ReviewInsights(
-            risks=["Deleting the entire page implementation breaks the application."],
-            improvements=["Restore the Home page component."],
-        ),
+        issues=[],
+        insights=ReviewInsights(whats_good=["Clear validation logic", "Tests updated"]),
     )
+    enriched = enrich_verdict(metadata, verdict, _files(), mode="agent")
 
-    enriched = enrich_verdict(metadata, verdict, files, mode="agent")
-
-    assert enriched.confidence == "low"
-    assert enriched.confidence_score is not None
-    assert enriched.confidence_score < 48
-    assert any("diff" in tip.lower() for tip in enriched.confidence_tips)
-    assert any("destructive" in tip.lower() or "placeholder" in tip.lower() for tip in enriched.confidence_tips)
+    assert enriched.pr_readiness_score is not None
+    assert enriched.pr_readiness == "high"
+    assert enriched.pr_readiness_score >= 75

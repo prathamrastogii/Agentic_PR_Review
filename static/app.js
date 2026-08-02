@@ -25,6 +25,7 @@ import { showToast } from "./toast.js";
 import { ReviewStreamError, consumeReviewStream } from "./stream.js";
 
 const CONFIDENCE_TIPS_THRESHOLD = 80;
+const READINESS_TIPS_THRESHOLD = 55;
 const SEVERITY_LABEL = { error: "High", warning: "Medium", suggestion: "Low" };
 
 const TIMELINE_PHASES = [
@@ -98,6 +99,11 @@ const confidenceChartFill = document.getElementById("confidence-chart-fill");
 const confidenceValue = document.getElementById("confidence-value");
 const confidenceCaption = document.getElementById("confidence-caption");
 const confidenceTips = document.getElementById("confidence-tips");
+const readinessChart = document.getElementById("readiness-chart");
+const readinessChartFill = document.getElementById("readiness-chart-fill");
+const readinessValue = document.getElementById("readiness-value");
+const readinessCaption = document.getElementById("readiness-caption");
+const readinessTips = document.getElementById("readiness-tips");
 const contextRepo = document.getElementById("context-repo");
 const contextBranches = document.getElementById("context-branches");
 const contextBadges = document.getElementById("context-badges");
@@ -754,28 +760,69 @@ function renderIssues(issues) {
   }
 }
 
-function renderConfidenceChart(verdict) {
-  const score =
-    verdict.confidence_score ??
-    (verdict.confidence === "high" ? 72 : verdict.confidence === "medium" ? 48 : 25);
-  const level = score >= 72 ? "high" : score >= 48 ? "medium" : "low";
-  confidenceChart.className = `confidence-chart confidence-chart--${level}`;
-  confidenceChartFill.setAttribute("stroke-dasharray", `${score}, 100`);
-  confidenceValue.textContent = `${score}%`;
-  confidenceCaption.textContent =
-    verdict.confidence_rationale || `${score}% review confidence`;
+function renderMetricChart({
+  chartEl,
+  fillEl,
+  valueEl,
+  captionEl,
+  tipsEl,
+  score,
+  fallbackLevel,
+  rationale,
+  tips,
+  tipsThreshold,
+  fallbackCaption,
+}) {
+  const resolvedScore =
+    score ??
+    (fallbackLevel === "high" ? 72 : fallbackLevel === "medium" ? 48 : 25);
+  const level =
+    resolvedScore >= 72 ? "high" : resolvedScore >= 48 ? "medium" : "low";
+  chartEl.className = `metric-chart ${chartEl.id} metric-chart--${level}`;
+  fillEl.setAttribute("stroke-dasharray", `${resolvedScore}, 100`);
+  valueEl.textContent = `${resolvedScore}%`;
+  captionEl.textContent = rationale || fallbackCaption || `${resolvedScore}%`;
 
-  const tips = verdict.confidence_tips || [];
-  if (!confidenceTips) return;
-  if (score < CONFIDENCE_TIPS_THRESHOLD && tips.length) {
-    confidenceTips.hidden = false;
-    confidenceTips.innerHTML = tips
-      .map((tip) => `<li>${escapeHtml(tip)}</li>`)
-      .join("");
+  if (!tipsEl) return;
+  if (resolvedScore < tipsThreshold && tips?.length) {
+    tipsEl.hidden = false;
+    tipsEl.innerHTML = tips.map((tip) => `<li>${escapeHtml(tip)}</li>`).join("");
   } else {
-    confidenceTips.hidden = true;
-    confidenceTips.innerHTML = "";
+    tipsEl.hidden = true;
+    tipsEl.innerHTML = "";
   }
+}
+
+function renderReadinessChart(verdict) {
+  renderMetricChart({
+    chartEl: readinessChart,
+    fillEl: readinessChartFill,
+    valueEl: readinessValue,
+    captionEl: readinessCaption,
+    tipsEl: readinessTips,
+    score: verdict.pr_readiness_score,
+    fallbackLevel: verdict.pr_readiness || verdict.confidence,
+    rationale: verdict.pr_readiness_rationale,
+    tips: verdict.pr_readiness_tips,
+    tipsThreshold: READINESS_TIPS_THRESHOLD,
+    fallbackCaption: "PR readiness",
+  });
+}
+
+function renderConfidenceChart(verdict) {
+  renderMetricChart({
+    chartEl: confidenceChart,
+    fillEl: confidenceChartFill,
+    valueEl: confidenceValue,
+    captionEl: confidenceCaption,
+    tipsEl: confidenceTips,
+    score: verdict.confidence_score,
+    fallbackLevel: verdict.confidence,
+    rationale: verdict.confidence_rationale,
+    tips: verdict.confidence_tips,
+    tipsThreshold: CONFIDENCE_TIPS_THRESHOLD,
+    fallbackCaption: `${verdict.confidence_score ?? ""}% review confidence`.trim(),
+  });
 }
 
 function renderStats(issues) {
@@ -863,6 +910,7 @@ function renderVerdict(verdict, mode, prUrl, { fromHistory = false } = {}) {
 
   renderPrHeader(prUrl);
   renderContext(capturedPrMetadata, mode);
+  renderReadinessChart(verdict);
   renderConfidenceChart(verdict);
   renderProgress(verdict, mode);
   renderStats(verdict.issues);

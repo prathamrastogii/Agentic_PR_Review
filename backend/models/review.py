@@ -75,6 +75,10 @@ class ReviewVerdict(BaseModel):
     confidence_score: int | None = None
     confidence_rationale: str | None = None
     confidence_tips: list[str] = Field(default_factory=list)
+    pr_readiness: Literal["high", "medium", "low"] | None = None
+    pr_readiness_score: int | None = None
+    pr_readiness_rationale: str | None = None
+    pr_readiness_tips: list[str] = Field(default_factory=list)
     partial_investigation: bool = False
     investigation_trail: list[InvestigationStep] = Field(default_factory=list)
     insights: ReviewInsights = Field(default_factory=ReviewInsights)

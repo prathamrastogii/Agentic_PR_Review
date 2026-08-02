@@ -303,17 +303,31 @@
                   <p id="context-branches" class="metric-card__caption"></p>
                   <div id="context-badges" class="context-badges"></div>
                 </article>
+                <article class="metric-card metric-card--readiness" aria-labelledby="metric-readiness-label">
+                  <h3 id="metric-readiness-label" class="metric-card__label">PR readiness</h3>
+                  <p class="metric-card__hint">Safe to merge for this aim</p>
+                  <div class="metric-chart readiness-chart" id="readiness-chart">
+                    <svg class="metric-chart__svg" viewBox="0 0 36 36" aria-hidden="true">
+                      <path class="metric-chart__track" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                      <path id="readiness-chart-fill" class="metric-chart__fill" stroke-dasharray="0, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                    </svg>
+                    <span id="readiness-value" class="metric-chart__value">-</span>
+                  </div>
+                  <p id="readiness-caption" class="metric-card__caption"></p>
+                  <ul id="readiness-tips" class="metric-tips" hidden aria-label="How to improve PR readiness"></ul>
+                </article>
                 <article class="metric-card metric-card--confidence" aria-labelledby="metric-confidence-label">
                   <h3 id="metric-confidence-label" class="metric-card__label">Review confidence</h3>
-                  <div class="confidence-chart" id="confidence-chart">
-                    <svg class="confidence-chart__svg" viewBox="0 0 36 36" aria-hidden="true">
-                      <path class="confidence-chart__track" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
-                      <path id="confidence-chart-fill" class="confidence-chart__fill" stroke-dasharray="0, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                  <p class="metric-card__hint">Trust in this review given available context</p>
+                  <div class="metric-chart confidence-chart" id="confidence-chart">
+                    <svg class="metric-chart__svg" viewBox="0 0 36 36" aria-hidden="true">
+                      <path class="metric-chart__track" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                      <path id="confidence-chart-fill" class="metric-chart__fill" stroke-dasharray="0, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
                     </svg>
-                    <span id="confidence-value" class="confidence-chart__value">-</span>
+                    <span id="confidence-value" class="metric-chart__value">-</span>
                   </div>
                   <p id="confidence-caption" class="metric-card__caption"></p>
-                  <ul id="confidence-tips" class="confidence-tips" hidden aria-label="How to improve review confidence"></ul>
+                  <ul id="confidence-tips" class="metric-tips" hidden aria-label="Review confidence caveats"></ul>
                 </article>
                 <article class="metric-card metric-card--progress" aria-labelledby="metric-progress-label">
                   <h3 id="metric-progress-label" class="metric-card__label">Analysis Progress</h3>

@@ -8,16 +8,28 @@ export function verdictToMarkdown({ verdict, prTitle, prUrl, mode, prMetadata })
     lines.push(`**Branches:** \`${prMetadata.head_ref}\` → \`${prMetadata.base_ref}\``);
   }
   lines.push(`**Mode:** ${mode === "agent" ? "Agent" : "Baseline"}`);
+  if (verdict.pr_readiness_score != null) {
+    lines.push(
+      `**PR readiness:** ${verdict.pr_readiness_score}% (${verdict.pr_readiness || "unknown"})`
+    );
+    if (verdict.pr_readiness_rationale) {
+      lines.push(`**PR readiness note:** ${verdict.pr_readiness_rationale}`);
+    }
+    if (verdict.pr_readiness_score < 55 && verdict.pr_readiness_tips?.length) {
+      lines.push("", "**How to improve PR readiness:**");
+      for (const tip of verdict.pr_readiness_tips) lines.push(`- ${tip}`);
+    }
+  }
   if (verdict.confidence_score != null) {
-    lines.push(`**Confidence:** ${verdict.confidence_score}% (${verdict.confidence})`);
+    lines.push(`**Review confidence:** ${verdict.confidence_score}% (${verdict.confidence})`);
     if (verdict.confidence_rationale) {
-      lines.push(`**Confidence note:** ${verdict.confidence_rationale}`);
+      lines.push(`**Review confidence note:** ${verdict.confidence_rationale}`);
     }
     if (verdict.confidence_score < 80 && verdict.confidence_tips?.length) {
-      lines.push("", "**How to improve confidence:**");
+      lines.push("", "**Review confidence caveats:**");
       for (const tip of verdict.confidence_tips) lines.push(`- ${tip}`);
     }
-  } else {
+  } else if (verdict.pr_readiness_score == null) {
     lines.push(`**Confidence:** ${verdict.confidence}`);
   }
   lines.push("");

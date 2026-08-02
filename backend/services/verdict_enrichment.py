@@ -10,6 +10,7 @@ from backend.models.review import ReviewIssue, ReviewVerdict
 
 MODEL_BASE_SCORE = {"high": 62, "medium": 48, "low": 32}
 CONFIDENCE_TIPS_THRESHOLD = 80
+READINESS_TIPS_THRESHOLD = 55
 
 ERROR_KEYWORDS = re.compile(
     r"\b(bug|crash|security|vulnerab|exploit|data loss|incorrect|wrong|break|"
@@ -44,12 +45,22 @@ def enrich_verdict(
     verdict = sync_insights_to_issues(verdict, files)
     score, rationale, level = compute_confidence_score(metadata, verdict, files, mode=mode)
     tips = build_confidence_tips(metadata, verdict, files, score, mode=mode)
+    readiness_score, readiness_rationale, readiness_level = compute_pr_readiness_score(
+        metadata, verdict, files
+    )
+    readiness_tips = build_pr_readiness_tips(
+        metadata, verdict, files, readiness_score
+    )
     return verdict.model_copy(
         update={
             "confidence_score": score,
             "confidence_rationale": rationale,
             "confidence": level,
             "confidence_tips": tips,
+            "pr_readiness_score": readiness_score,
+            "pr_readiness_rationale": readiness_rationale,
+            "pr_readiness": readiness_level,
+            "pr_readiness_tips": readiness_tips,
         }
     )
 
@@ -99,63 +110,256 @@ def compute_confidence_score(
     *,
     mode: Literal["agent", "baseline"] = "agent",
 ) -> tuple[int, str, Literal["high", "medium", "low"]]:
-    """Score how thoroughly the review investigated the PR, not how good the PR is."""
-    aim, aim_clarity = infer_pr_aim(metadata, files)
-    score = float(MODEL_BASE_SCORE.get(verdict.confidence, MODEL_BASE_SCORE["low"]))
+    """Score how trustworthy the review is given the context the model had."""
+    aim, _ = infer_pr_aim(metadata, files)
+    richness, context_summary = _review_context_richness(
+        metadata, verdict, files, mode=mode
+    )
+    calibration = _review_calibration_score(verdict, richness, files, mode=mode)
 
-    # PR context clarity is a small signal only; a polished title must not inflate review confidence.
-    score += aim_clarity * 0.35
+    score = round(richness * 0.35 + calibration * 0.65)
+    score = max(8, min(96, score))
 
-    if _has_description(metadata):
-        score += 4
-
-    if _title_branch_overlap(metadata.title, metadata.head_ref):
-        score += 2
-
-    trail_len = len(verdict.investigation_trail)
-    if trail_len:
-        score += min(12, trail_len * 3)
-    elif mode == "agent":
-        score -= 16
-    else:
-        score -= 6
-
-    if verdict.partial_investigation:
-        score -= 14
-
-    suspicious_penalty = _suspicious_diff_penalty(files)
-    score -= suspicious_penalty
-
-    score = max(8, min(96, round(score)))
-    level: Literal["high", "medium", "low"]
     if score >= 72:
-        level = "high"
+        level: Literal["high", "medium", "low"] = "high"
     elif score >= 48:
         level = "medium"
     else:
         level = "low"
 
-    if trail_len == 0 and mode == "agent":
-        score = min(score, 58)
-        if suspicious_penalty:
-            score = min(score, 44)
-        if score >= 72:
-            level = "high"
-        elif score >= 48:
-            level = "medium"
-        else:
-            level = "low"
-
-    if verdict.partial_investigation and level == "high":
-        level = "medium"
-
-    if trail_len == 0 and level == "high":
+    if verdict.partial_investigation and level == "high" and richness < 70:
         level = "medium"
 
     rationale = _confidence_rationale(
-        metadata, aim, verdict, score, files, mode=mode
+        metadata, aim, verdict, score, context_summary, richness, calibration
     )
     return score, rationale, level
+
+
+def _review_context_richness(
+    metadata: PRMetadata,
+    verdict: ReviewVerdict,
+    files: list[FileDiff],
+    *,
+    mode: Literal["agent", "baseline"],
+) -> tuple[int, str]:
+    """Estimate how much evidence was available to the reviewer (0-100)."""
+    score = 38.0
+    file_count = len(files)
+    total_changes = sum(item.changes for item in files)
+    trail_len = len(verdict.investigation_trail)
+    parts: list[str] = ["PR diff"]
+
+    if _has_description(metadata):
+        score += 14
+        parts.append("description")
+    elif file_count > 1:
+        score -= 3
+
+    if file_count == 1:
+        score += 28
+        parts.append("single-file change (diff likely complete)")
+    elif file_count == 2 and total_changes < 120:
+        score += 12
+    elif file_count >= 5:
+        score -= 10
+        parts.append(f"{file_count} changed files")
+
+    if total_changes > 300:
+        score -= 12
+        parts.append("large diff")
+
+    if trail_len:
+        score += min(24, trail_len * 8)
+        parts.append(f"{trail_len} supporting file(s)")
+
+    if mode == "baseline":
+        score += 6
+        parts.append("baseline mode (diff-only by design)")
+
+    if verdict.partial_investigation:
+        score -= 16
+        parts.append("partial run")
+
+    if mode == "agent" and file_count >= 3 and trail_len == 0:
+        score -= 12
+        parts.append("no files beyond diff on a multi-file PR")
+    elif mode == "agent" and file_count >= 6 and trail_len < 2:
+        score -= 8
+
+    missing_patches = sum(1 for item in files if not item.patch)
+    if missing_patches:
+        score -= min(10, missing_patches * 5)
+        parts.append("some file patches unavailable")
+
+    richness = max(10, min(95, round(score)))
+    summary = ", ".join(parts)
+    return richness, summary
+
+
+def _review_calibration_score(
+    verdict: ReviewVerdict,
+    richness: int,
+    files: list[FileDiff],
+    *,
+    mode: Literal["agent", "baseline"],
+) -> float:
+    """Adjust model-stated confidence to match available evidence."""
+    score = float(MODEL_BASE_SCORE.get(verdict.confidence, MODEL_BASE_SCORE["low"]))
+    file_count = len(files)
+
+    if verdict.confidence == "high" and richness < 55:
+        score -= 20
+    elif verdict.confidence == "high" and richness < 68 and file_count > 1:
+        score -= 10
+
+    if verdict.confidence == "low" and richness >= 72:
+        score += 8
+
+    if verdict.partial_investigation:
+        if verdict.confidence == "high":
+            score -= 14
+        else:
+            score -= 6
+
+    if verdict.issues:
+        has_blocking = any(issue.severity == "error" for issue in verdict.issues)
+        if file_count == 1 and has_blocking and verdict.confidence == "high":
+            score += 14
+        elif richness >= 60 and verdict.confidence in ("high", "medium"):
+            score += 8
+        elif richness >= 52 and file_count == 1 and verdict.confidence in ("high", "medium"):
+            score += 8
+        elif verdict.confidence == "low":
+            score += 4
+
+    trail_len = len(verdict.investigation_trail)
+    if (
+        mode == "agent"
+        and file_count >= 4
+        and trail_len == 0
+        and verdict.confidence == "high"
+        and not verdict.issues
+    ):
+        score -= 12
+
+    return max(18, min(95, score))
+
+
+def compute_pr_readiness_score(
+    metadata: PRMetadata,
+    verdict: ReviewVerdict,
+    files: list[FileDiff],
+) -> tuple[int, str, Literal["high", "medium", "low"]]:
+    """Score how safe the PR looks to merge given findings, aim, and diff shape."""
+    aim, _ = infer_pr_aim(metadata, files)
+    score = 100.0
+
+    errors = sum(1 for issue in verdict.issues if issue.severity == "error")
+    warnings = sum(1 for issue in verdict.issues if issue.severity == "warning")
+    suggestions = sum(1 for issue in verdict.issues if issue.severity == "suggestion")
+
+    score -= errors * 28
+    score -= warnings * 10
+    score -= suggestions * 3
+
+    covered_risk_messages = {
+        issue.message.strip().lower()
+        for issue in verdict.issues
+        if issue.severity in ("error", "warning")
+    }
+    extra_risks = [
+        risk
+        for risk in verdict.insights.risks
+        if risk.strip().lower() not in covered_risk_messages
+    ]
+    score -= min(16, len(extra_risks) * 8)
+
+    suspicious_penalty = _suspicious_diff_penalty(files)
+    score -= suspicious_penalty * 1.5
+
+    if suspicious_penalty and _looks_like_feature_pr(metadata):
+        score -= 12
+
+    if not _has_description(metadata):
+        score -= 6
+
+    src_files = [
+        item
+        for item in files
+        if item.status != "removed" and not _is_test_file(item.filename)
+    ]
+    test_files = [item for item in files if _is_test_file(item.filename)]
+    if len(src_files) >= 2 and not test_files:
+        score -= 8
+
+    if (
+        not verdict.issues
+        and not verdict.insights.risks
+        and suspicious_penalty == 0
+    ):
+        score = min(98, score + 2)
+
+    score = max(5, min(98, round(score)))
+
+    if score >= 75:
+        level: Literal["high", "medium", "low"] = "high"
+    elif score >= 45:
+        level = "medium"
+    else:
+        level = "low"
+
+    rationale = _pr_readiness_rationale(metadata, aim, verdict, files, score)
+    return score, rationale, level
+
+
+def build_pr_readiness_tips(
+    metadata: PRMetadata,
+    verdict: ReviewVerdict,
+    files: list[FileDiff],
+    score: int,
+) -> list[str]:
+    """Actionable merge guidance when PR readiness is below the display threshold."""
+    if score >= READINESS_TIPS_THRESHOLD:
+        return []
+
+    tips: list[str] = []
+
+    errors = [issue for issue in verdict.issues if issue.severity == "error"]
+    if errors:
+        tips.append(
+            f"Resolve {len(errors)} high-severity issue(s) before merging."
+        )
+
+    if _suspicious_diff_penalty(files):
+        tips.append(
+            "The diff looks destructive or placeholder-like. Confirm the intended "
+            "implementation is present before merge."
+        )
+
+    if _looks_like_feature_pr(metadata) and not _test_files_for_pr(files):
+        tips.append(
+            "This looks like a feature change without test updates. Add or link tests "
+            "that cover the new behavior."
+        )
+
+    if not _has_description(metadata):
+        tips.append(
+            "Add a PR description explaining what changed, why, and how you verified it."
+        )
+
+    if verdict.insights.improvements and score < 45:
+        tips.append(
+            "Address improvement items called out in the review, or document why they "
+            "can wait until a follow-up PR."
+        )
+
+    if not tips:
+        tips.append(
+            "Review flagged risks in the summary and issues list before merging."
+        )
+
+    return tips[:5]
 
 
 def build_confidence_tips(
@@ -166,69 +370,61 @@ def build_confidence_tips(
     *,
     mode: Literal["agent", "baseline"] = "agent",
 ) -> list[str]:
-    """Actionable tips when review confidence is below the display threshold."""
+    """Tips when review trust is low relative to available context."""
     if score >= CONFIDENCE_TIPS_THRESHOLD:
         return []
 
     tips: list[str] = []
-
+    richness, _ = _review_context_richness(metadata, verdict, files, mode=mode)
     trail_len = len(verdict.investigation_trail)
-    if mode == "agent" and trail_len == 0:
-        tips.append(
-            "This review only used the PR diff. The agent did not open supporting files, "
-            "so confidence in non-obvious findings is limited."
-        )
+    file_count = len(files)
+    total_changes = sum(item.changes for item in files)
 
-    if _suspicious_diff_penalty(files):
+    if mode == "agent" and file_count >= 3 and trail_len == 0:
         tips.append(
-            "The diff looks destructive or placeholder-like. Treat findings as provisional "
-            "until a human confirms the intended change."
+            "Only the PR diff was available for a multi-file change. Subtle cross-file "
+            "issues may be missing from this review."
+        )
+    elif mode == "agent" and file_count >= 6 and trail_len < 2:
+        tips.append(
+            f"Limited supporting context ({trail_len} file(s) read across {file_count} "
+            "changed files). Re-run after fetching key callees if the change is risky."
         )
 
     if not _has_description(metadata):
         tips.append(
-            "Add a PR description with context, motivation, and how you tested the change."
+            "No PR description was available to the reviewer. Intent and test notes were "
+            "inferred from the title and diff only."
         )
 
     if verdict.partial_investigation:
         tips.append(
-            "Investigation stopped early. Re-run the review or manually verify files "
-            "the agent could not fetch."
+            "The review ended before the agent finished investigating. Findings may only "
+            "cover what was visible at that point."
         )
 
-    trail_len = len(verdict.investigation_trail)
-    file_count = len(files)
-    if file_count > 2 and trail_len == 0 and mode == "agent":
+    if total_changes > 300 and richness < 60:
         tips.append(
-            "This PR changes multiple files but no supporting files were investigated. "
-            "Use agent mode and let it read callees and related modules."
-        )
-    elif file_count > 5 and trail_len < 2:
-        tips.append(
-            f"Only {trail_len} file(s) were investigated across {file_count} changed files. "
-            "Investigate key imports or callers for higher confidence."
+            "The diff is large relative to the context provided. Consider a smaller PR or "
+            "re-running with agent mode so related files can be read."
         )
 
-    if not _title_branch_overlap(metadata.title, metadata.head_ref):
+    if sum(1 for item in files if not item.patch) > 0:
         tips.append(
-            "Align the branch name and PR title so intent is obvious without reading the diff."
+            "Some changed files had no inline patch in the review context. Those files "
+            "were not fully visible to the model."
         )
 
-    if len(metadata.title.strip()) < 25:
+    if verdict.confidence == "high" and richness < 55:
         tips.append(
-            "Use a more specific PR title that states what changed and the expected outcome."
-        )
-
-    total_changes = sum(item.changes for item in files)
-    if total_changes > 300:
-        tips.append(
-            "Large diffs are harder to review confidently. Split follow-up work into "
-            "smaller PRs when feasible."
+            "The model claimed high confidence despite thin context. Treat non-obvious "
+            "findings cautiously."
         )
 
     if not tips:
         tips.append(
-            "Provide more PR context (description, linked issue, test notes) before merging."
+            "Available context was limited for this PR shape. Manually verify findings "
+            "that depend on code outside the diff."
         )
 
     return tips[:5]
@@ -330,35 +526,60 @@ def _confidence_rationale(
     aim: str,
     verdict: ReviewVerdict,
     score: int,
-    files: list[FileDiff],
-    *,
-    mode: Literal["agent", "baseline"] = "agent",
+    context_summary: str,
+    richness: int,
+    calibration: float,
 ) -> str:
-    if _has_description(metadata):
-        source = "the PR description"
-    else:
-        source = "the title, branch name, and changed files"
-
-    trail_len = len(verdict.investigation_trail)
-    if trail_len:
-        depth = f"{trail_len} file(s) read beyond the diff"
-    elif mode == "agent":
-        depth = "diff-only context (agent did not investigate supporting files)"
-    else:
-        depth = "diff-only context (baseline mode)"
-
-    partial = " Partial investigation." if verdict.partial_investigation else ""
-    suspicious = (
-        " Suspicious diff patterns detected."
-        if _suspicious_diff_penalty(files)
-        else ""
-    )
+    partial = " Review ended early." if verdict.partial_investigation else ""
     return (
-        f"{score}% review confidence based on investigation depth ({depth}), "
-        f"with light context from {source} "
-        f'("{aim[:100]}{"…" if len(aim) > 100 else ""}").'
-        f"{partial}{suspicious}"
+        f"{score}% review confidence: trust in this review given available context "
+        f"({context_summary}; richness {richness}%, calibration {round(calibration)}%). "
+        f'Aim context: "{aim[:90]}{"…" if len(aim) > 90 else ""}".{partial}'
     )
+
+
+def _pr_readiness_rationale(
+    metadata: PRMetadata,
+    aim: str,
+    verdict: ReviewVerdict,
+    files: list[FileDiff],
+    score: int,
+) -> str:
+    errors = sum(1 for issue in verdict.issues if issue.severity == "error")
+    warnings = sum(1 for issue in verdict.issues if issue.severity == "warning")
+    parts: list[str] = []
+    if errors or warnings:
+        parts.append(
+            f"{errors} blocking and {warnings} moderate issue(s) flagged"
+        )
+    else:
+        parts.append("no blocking issues flagged")
+
+    if _suspicious_diff_penalty(files):
+        parts.append("suspicious diff patterns detected")
+    elif _looks_like_feature_pr(metadata):
+        parts.append("change intent inferred from title/branch")
+
+    detail = ", ".join(parts)
+    return (
+        f"{score}% PR readiness based on whether the change looks safe to merge "
+        f'for its aim ("{aim[:100]}{"…" if len(aim) > 100 else ""}"): {detail}.'
+    )
+
+
+def _looks_like_feature_pr(metadata: PRMetadata) -> bool:
+    hint = _branch_intent_hint(metadata.head_ref)
+    if hint and "feature" in hint.lower():
+        return True
+    title = metadata.title.lower()
+    return any(
+        token in title
+        for token in ("feat", "feature", "add ", "implement", "support", "introduce")
+    )
+
+
+def _test_files_for_pr(files: list[FileDiff]) -> list[FileDiff]:
+    return [item for item in files if _is_test_file(item.filename)]
 
 
 def _suspicious_diff_penalty(files: list[FileDiff]) -> int:
