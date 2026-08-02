@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import re
@@ -8,6 +9,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, ValidationError
 
 from backend.agent.providers import LLMConfig, build_chat_model, resolve_llm_config
+from backend.config import LLM_TIMEOUT_SECONDS
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +44,18 @@ class LLMRateLimitError(Exception):
         super().__init__(message)
 
 
+class LLMTimeoutError(Exception):
+    """Upstream LLM did not respond within the configured deadline."""
+
+    def __init__(self, provider: str, seconds: float):
+        self.provider = provider
+        self.seconds = seconds
+        super().__init__(
+            f"LLM call timed out after {seconds:g}s ({provider}). "
+            "Try again or use baseline mode for a shorter review."
+        )
+
+
 def is_rate_limit_error(exc: Exception) -> bool:
     if getattr(exc, "status_code", None) == 429:
         return True
@@ -50,6 +64,13 @@ def is_rate_limit_error(exc: Exception) -> bool:
 
 def get_llm(llm_config: LLMConfig | None = None) -> BaseChatModel:
     return build_chat_model(llm_config or resolve_llm_config())
+
+
+async def _ainvoke_with_timeout(awaitable, *, provider: str):
+    try:
+        return await asyncio.wait_for(awaitable, timeout=LLM_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError as exc:
+        raise LLMTimeoutError(provider, LLM_TIMEOUT_SECONDS) from exc
 
 
 def extract_json(text: str) -> str:
@@ -105,7 +126,9 @@ async def _invoke_json_mode(
 
     for attempt in range(MAX_RETRIES + 1):
         try:
-            response = await llm.ainvoke(messages)
+            response = await _ainvoke_with_timeout(
+                llm.ainvoke(messages), provider=llm_config.provider
+            )
             content = (
                 response.content
                 if isinstance(response.content, str)
@@ -154,7 +177,9 @@ async def _invoke_tool_mode(
 
     for attempt in range(MAX_RETRIES + 1):
         try:
-            result = await structured_llm.ainvoke(messages)
+            result = await _ainvoke_with_timeout(
+                structured_llm.ainvoke(messages), provider=llm_config.provider
+            )
             logger.info("  llm ok | attempt=%d schema=%s", attempt + 1, model.__name__)
             if isinstance(result, model):
                 return result

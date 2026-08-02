@@ -55,13 +55,16 @@ async def test_review_agent_mode(mock_run_review, client):
         investigation_trail=[{"file_path": "helpers.py", "reason": "check callee"}]
     )
 
-    response = await client.post(
-        "/api/review",
-        json={
-            "pr_url": "https://github.com/octo/repo/pull/1",
-            "mode": "agent",
-        },
-    )
+    with patch("backend.config.LLM_PROVIDER", "google"), patch(
+        "backend.config.GOOGLE_API_KEY", "test-google-key"
+    ):
+        response = await client.post(
+            "/api/review",
+            json={
+                "pr_url": "https://github.com/octo/repo/pull/1",
+                "mode": "agent",
+            },
+        )
 
     assert response.status_code == 200
     payload = response.json()
@@ -69,7 +72,7 @@ async def test_review_agent_mode(mock_run_review, client):
     assert len(payload["investigation_trail"]) == 1
     args, kwargs = mock_run_review.await_args
     assert args == ("https://github.com/octo/repo/pull/1", "agent")
-    assert kwargs["llm_config"].provider == "groq"
+    assert kwargs["llm_config"].provider == "google"
 
 
 @pytest.mark.asyncio

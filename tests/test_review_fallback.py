@@ -27,7 +27,20 @@ class TestIsRateLimitError:
 
 
 class TestResolveFallbackConfig:
-    def test_groq_falls_back_to_google(self):
+    def test_google_falls_back_to_groq_by_default(self):
+        google = LLMConfig(provider="google", model="m", api_key="k")
+        with (
+            patch("backend.config.LLM_FALLBACK_PROVIDER", None),
+            patch("backend.config.GROQ_API_KEY", "groq-key"),
+            patch("backend.config.GROQ_MODEL", "llama-3.3-70b-versatile"),
+        ):
+            fallback = resolve_fallback_config(google)
+
+        assert fallback is not None
+        assert fallback.provider == "groq"
+        assert fallback.model == "llama-3.3-70b-versatile"
+
+    def test_groq_falls_back_to_google_when_configured(self):
         groq = LLMConfig(provider="groq", model="m", api_key="k")
         with (
             patch("backend.config.LLM_FALLBACK_PROVIDER", "google"),
@@ -40,7 +53,12 @@ class TestResolveFallbackConfig:
         assert fallback.provider == "google"
         assert fallback.model == "gemini-3.5-flash-lite"
 
-    def test_no_fallback_when_already_on_google(self):
+    def test_no_fallback_when_already_on_groq(self):
+        groq = LLMConfig(provider="groq", model="m", api_key="k")
+        with patch("backend.config.LLM_FALLBACK_PROVIDER", None):
+            assert resolve_fallback_config(groq) is None
+
+    def test_no_fallback_when_already_on_google_with_explicit_fallback(self):
         google = LLMConfig(provider="google", model="m", api_key="k")
         with patch("backend.config.LLM_FALLBACK_PROVIDER", "google"):
             assert resolve_fallback_config(google) is None
