@@ -121,9 +121,13 @@ python scripts/review.py <pr_url> --max-investigations 8
 |----------|----------|-------------|
 | `GOOGLE_API_KEY` | For free tier | Google AI key ([aistudio.google.com](https://aistudio.google.com/apikey)) |
 | `GROQ_API_KEY` | For fallback / BYO | Groq API key ([console.groq.com](https://console.groq.com/keys)) |
-| `LLM_PROVIDER` | Optional | Default provider: `google` or `groq` (default: `google`) |
+| `LLM_PROVIDER` | Optional | Default provider: `google`, `openai`, `groq`, or `anthropic` (default: `google`) |
 | `LLM_FALLBACK_PROVIDER` | Optional | Fallback when primary is rate-limited (default: `groq`) |
 | `LLM_TIMEOUT_SECONDS` | Optional | Per LLM request timeout (default: `180`) |
+| `OPENAI_API_KEY` | For OpenAI BYO | OpenAI API key ([platform.openai.com](https://platform.openai.com/api-keys)) |
+| `OPENAI_MODEL` | Optional | Default OpenAI model (default: `gpt-4o`) |
+| `ANTHROPIC_API_KEY` | For Anthropic BYO | Anthropic API key ([console.anthropic.com](https://console.anthropic.com/settings/keys)) |
+| `ANTHROPIC_MODEL` | Optional | Default Anthropic model (default: `claude-sonnet-4-0`) |
 | `GROQ_MODEL` | Optional | Default Groq model (default: `llama-3.3-70b-versatile`) |
 | `GOOGLE_MODEL` | Optional | Default Gemini model (default: `gemini-3.5-flash-lite`) |
 | `GOOGLE_THINKING_BUDGET` | Optional | Gemini thinking budget; omit unless you know you need it |
@@ -163,7 +167,7 @@ pytest tests/ -q --deselect tests/test_github_client.py::test_live_public_pr_fet
 ## Limitations
 
 - **GitHub rate limits** — without `GITHUB_TOKEN`, expect ~60 API calls/hour. Heavy agent use will hit this quickly.
-- **Server LLM providers** — the backend currently implements **Groq** and **Google Gemini** only. The UI vendor catalog lists other providers for future use; BYO for those vendors requires adding a provider in `backend/agent/providers.py`.
+- **Server LLM providers** — the backend supports **Google Gemini**, **OpenAI**, **Groq**, and **Anthropic**. BYO keys for any of these work from the UI without server env configuration.
 - **Path guessing** — the agent must guess repository-relative file paths; wrong guesses consume budget but no longer abort the whole review.
 - **Model variability** — the model may put findings in insight bullets without structured `issues`; the server backfills issues from insights when possible.
 - **No persistence** — reviews are not stored in a database; history lives in browser `sessionStorage` only.
