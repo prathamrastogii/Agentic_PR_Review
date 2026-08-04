@@ -85,8 +85,8 @@ class TestSecretHandling:
 
 
 class TestProviderCatalogue:
-    def test_lists_groq_and_gemini(self):
-        assert set(PROVIDERS) == {"groq", "google"}
+    def test_lists_all_supported_providers(self):
+        assert set(PROVIDERS) == {"google", "openai", "groq", "anthropic"}
 
     def test_every_default_model_is_also_suggested(self):
         for spec in PROVIDERS.values():
@@ -114,6 +114,26 @@ class TestBuildChatModel:
         model = build_chat_model(resolved)
 
         assert model.model_name == "llama-3.1-8b-instant"
+
+    def test_builds_openai_with_requested_model(self):
+        resolved = LLMConfig(
+            provider="openai",
+            model="gpt-4o-mini",
+            api_key=SecretStr("user-key"),
+        )
+        model = build_chat_model(resolved)
+
+        assert model.model_name == "gpt-4o-mini"
+
+    def test_builds_anthropic_with_requested_model(self):
+        resolved = LLMConfig(
+            provider="anthropic",
+            model="claude-sonnet-4-0",
+            api_key=SecretStr("user-key"),
+        )
+        model = build_chat_model(resolved)
+
+        assert model.model == "claude-sonnet-4-0"
 
     def test_passes_thinking_budget_when_configured(self):
         resolved = LLMConfig(

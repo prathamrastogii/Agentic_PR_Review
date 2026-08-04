@@ -22,6 +22,12 @@ LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "google").strip().lower()
 LLM_FALLBACK_PROVIDER: str | None = _optional_env("LLM_FALLBACK_PROVIDER")
 LLM_TIMEOUT_SECONDS: float = float(os.getenv("LLM_TIMEOUT_SECONDS", "180"))
 
+OPENAI_API_KEY: str | None = _optional_env("OPENAI_API_KEY")
+OPENAI_MODEL: str | None = _optional_env("OPENAI_MODEL")
+
+ANTHROPIC_API_KEY: str | None = _optional_env("ANTHROPIC_API_KEY")
+ANTHROPIC_MODEL: str | None = _optional_env("ANTHROPIC_MODEL")
+
 GROQ_API_KEY: str | None = _optional_env("GROQ_API_KEY")
 GROQ_MODEL: str | None = _optional_env("GROQ_MODEL")
 

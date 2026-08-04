@@ -52,6 +52,34 @@ def _build_groq(llm_config: LLMConfig) -> BaseChatModel:
     )
 
 
+def _build_openai(llm_config: LLMConfig) -> BaseChatModel:
+    try:
+        from langchain_openai import ChatOpenAI
+    except ImportError as exc:  # pragma: no cover - depends on install
+        raise ValueError(
+            "OpenAI support requires the 'langchain-openai' package."
+        ) from exc
+    return ChatOpenAI(
+        model=llm_config.model,
+        api_key=llm_config.api_key.get_secret_value(),
+        temperature=0,
+    )
+
+
+def _build_anthropic(llm_config: LLMConfig) -> BaseChatModel:
+    try:
+        from langchain_anthropic import ChatAnthropic
+    except ImportError as exc:  # pragma: no cover - depends on install
+        raise ValueError(
+            "Anthropic support requires the 'langchain-anthropic' package."
+        ) from exc
+    return ChatAnthropic(
+        model=llm_config.model,
+        api_key=llm_config.api_key.get_secret_value(),
+        temperature=0,
+    )
+
+
 def _build_google(llm_config: LLMConfig) -> BaseChatModel:
     try:
         from langchain_google_genai import ChatGoogleGenerativeAI
@@ -71,6 +99,34 @@ def _build_google(llm_config: LLMConfig) -> BaseChatModel:
 
 
 PROVIDERS: dict[str, ProviderSpec] = {
+    "anthropic": ProviderSpec(
+        id="anthropic",
+        label="Anthropic",
+        default_model="claude-sonnet-4-0",
+        suggested_models=(
+            "claude-sonnet-4-0",
+            "claude-3-5-haiku-latest",
+            "claude-3-5-sonnet-latest",
+        ),
+        api_key_url="https://console.anthropic.com/settings/keys",
+        build=_build_anthropic,
+        server_key=lambda: config.ANTHROPIC_API_KEY,
+        server_model=lambda: config.ANTHROPIC_MODEL,
+    ),
+    "openai": ProviderSpec(
+        id="openai",
+        label="OpenAI",
+        default_model="gpt-4o",
+        suggested_models=(
+            "gpt-4o",
+            "gpt-4o-mini",
+            "gpt-4-turbo",
+        ),
+        api_key_url="https://platform.openai.com/api-keys",
+        build=_build_openai,
+        server_key=lambda: config.OPENAI_API_KEY,
+        server_model=lambda: config.OPENAI_MODEL,
+    ),
     "groq": ProviderSpec(
         id="groq",
         label="Groq",
